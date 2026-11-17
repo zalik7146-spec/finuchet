@@ -1,5 +1,5 @@
-import { useId, useMemo, type ReactNode } from 'react';
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { useMemo, type ReactNode } from 'react';
+import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { IconPie, IconTrendUp, IconTruck, IconWallet } from './icons';
 import type { Category, Expense, Filter } from '../types';
 import { sumAmounts, timelineByCategory, totalsByCategory, totalsByVendor } from '../lib/filters';
@@ -7,28 +7,6 @@ import type { ProductSummary } from '../lib/prices';
 import { formatBucket, formatRub, formatRubShort } from '../lib/format';
 
 const pctText = (n: number) => `${n > 0 ? '+' : ''}${n.toLocaleString('ru-RU', { maximumFractionDigits: 1 })}%`;
-
-/** Мини-график под числом в карточке показателя. */
-function Sparkline({ values }: { values: number[] }) {
-  const id = useId();
-  if (values.length < 2 || values.every((v) => v === 0)) return null;
-  const data = values.map((v, i) => ({ i, v }));
-  return (
-    <div className="-mx-4 -mb-3.5 mt-2 h-11" aria-hidden="true">
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
-          <defs>
-            <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#2563EB" stopOpacity={0.18} />
-              <stop offset="100%" stopColor="#2563EB" stopOpacity={0} />
-            </linearGradient>
-          </defs>
-          <Area type="monotone" dataKey="v" stroke="#2563EB" strokeWidth={1.5} fill={`url(#${id})`} isAnimationActive={false} />
-        </AreaChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
 
 /** Бейдж изменения к прошлому периоду: рост расходов — нейтральный, это не обязательно плохо. */
 function DeltaBadge({ pct, title }: { pct: number; title: string }) {
@@ -46,7 +24,6 @@ function Kpi({
   value,
   badge,
   hint,
-  spark,
   mono = true,
   onClick,
 }: {
@@ -56,7 +33,6 @@ function Kpi({
   /** Справа от подписи — например, изменение к прошлому периоду. */
   badge?: ReactNode;
   hint?: ReactNode;
-  spark?: number[];
   mono?: boolean;
   onClick?: () => void;
 }) {
@@ -73,7 +49,6 @@ function Kpi({
         {value}
       </div>
       {hint && <div className="truncate text-[13px] text-slate-500">{hint}</div>}
-      {spark && <Sparkline values={spark} />}
     </>
   );
   const cls = 'card flex flex-col overflow-hidden px-4 py-3.5 text-left';
@@ -112,7 +87,10 @@ export function Dashboard({
   onOpenAwaiting,
   onOpenPriceGrowth,
   onOpenProduct,
+  recent,
 }: {
+  /** Последние операции — сразу под карточками, чтобы были под рукой. */
+  recent?: ReactNode;
   /** Отфильтрованная выборка. */
   expenses: Expense[];
   /** Сумма за предыдущий такой же период; null — сравнивать не с чем. */
@@ -154,10 +132,9 @@ export function Dashboard({
           hint={
             <>
               {count} {count % 10 === 1 && count % 100 !== 11 ? 'заявка' : [2, 3, 4].includes(count % 10) && ![12, 13, 14].includes(count % 100) ? 'заявки' : 'заявок'}
-              {previousTotal === null ? '' : delta === null ? ' · в прошлом периоде расходов не было' : ' · к прошлому периоду'}
+              {delta !== null && ' · к прошлому периоду'}
             </>
           }
-          spark={buckets.map((b) => b.total)}
         />
         <Kpi
           icon={<IconTruck />}
@@ -186,6 +163,8 @@ export function Dashboard({
           mono={false}
         />
       </div>
+
+      {recent}
 
       <div className="grid gap-4 xl:grid-cols-5">
         <Panel title="Расходы по времени" subtitle={`${granularity === 'day' ? 'По дням' : 'По месяцам'}, ₽ · цвет — направление`} className="xl:col-span-3">

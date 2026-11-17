@@ -8,7 +8,7 @@ import { amountToInput, isValidIsoDate, parseAmount } from './lib/format';
 import { Capture } from './components/Capture';
 import { Categories } from './components/Categories';
 import { Dashboard } from './components/Dashboard';
-import { IconCategories, IconLogout, IconMembers, IconOverview, IconPurchases, IconRegistry } from './components/icons';
+import { IconCategories, IconLogout, Logo, IconMembers, IconOverview, IconPurchases, IconRegistry } from './components/icons';
 import { Duplicates } from './components/Duplicates';
 import { findDuplicatePairs } from './lib/duplicates';
 import { aliasUpdates, lineToDraft, linesForSave, lineUnitPrice, newProductsToCreate } from './lib/draftLines';
@@ -371,9 +371,7 @@ export default function App() {
         className={`fixed inset-y-0 left-0 z-30 flex w-[208px] flex-col border-r border-line bg-white transition-transform lg:translate-x-0 ${navOpen ? 'translate-x-0' : '-translate-x-full'}`}
       >
         <div className="flex h-14 items-center gap-2.5 border-b border-line px-4">
-          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-ink text-[13px] font-bold text-white" aria-hidden="true">
-            ₽
-          </span>
+          <Logo />
           <span className="text-[15px] font-bold tracking-tight">ФинУчет ИИ</span>
         </div>
         <nav className="flex flex-1 flex-col gap-0.5 p-2.5" aria-label="Разделы">
@@ -527,9 +525,9 @@ export default function App() {
                             setView('purchases');
                           }}
                           onOpenProduct={setOpenProductId}
+                          recent={<Registry {...registryProps} expenses={recentFirst(filteredExpenses)} limit={8} onShowAll={() => setView('registry')} />}
                         />
                       )}
-                      <Registry {...registryProps} expenses={recentFirst(filteredExpenses)} limit={8} onShowAll={() => setView('registry')} />
                     </>
                   ) : (
                     <>

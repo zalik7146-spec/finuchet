@@ -106,3 +106,23 @@ export const IconLogout = (p: P) => (
     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
   </Svg>
 );
+
+/** Логотип: чек с галочкой на синем квадрате — «проверенный документ». */
+export function Logo({ size = 30 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 32 32" width={size} height={size} aria-hidden="true">
+      <defs>
+        <linearGradient id="finuchet-logo" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#3B82F6" />
+          <stop offset="100%" stopColor="#1D4ED8" />
+        </linearGradient>
+      </defs>
+      <rect width="32" height="32" rx="8" fill="url(#finuchet-logo)" />
+      <path
+        d="M10 7.5h12a1 1 0 0 1 1 1v15.2l-2-1.3-2 1.3-2-1.3-2 1.3-2-1.3-2 1.3-2-1.3V8.5a1 1 0 0 1 1-1z"
+        fill="#fff"
+      />
+      <path d="M12.5 15.2l2.3 2.3 4.7-4.8" fill="none" stroke="#2563EB" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
