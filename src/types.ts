@@ -22,9 +22,13 @@ export interface ExpenseInput {
   sourceType: SourceType;
   sourceFileName: string;
   aiConfidence: Confidence;
+  /** Покупка товара: ждём поставку, по факту отмечаем «Получено». */
+  isPurchase: boolean;
 }
 
 export interface Expense extends ExpenseInput {
+  receivedAt: number | null;
+  receivedByEmail: string;
   id: string;
   createdAt: number;
   updatedAt: number;
@@ -43,6 +47,7 @@ export interface Draft {
   sourceType: SourceType;
   sourceFileName: string;
   aiConfidence: Confidence;
+  isPurchase: boolean;
 }
 
 export type PeriodPreset = 'thisMonth' | 'lastMonth' | 'quarter' | 'year' | 'all' | 'custom';
@@ -76,4 +81,6 @@ export interface DataStore {
   /** Ключи пар pairKey(a, b), отмеченных «Не дубль». */
   subscribeDismissals(cb: (keys: Set<string>) => void, onError: (e: unknown) => void): () => void;
   dismissDuplicate(a: string, b: string): Promise<void>;
+  /** Ставит или снимает отметку «Получено» (дата и почта текущего пользователя). */
+  setReceived(id: string, received: boolean): Promise<void>;
 }

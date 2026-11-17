@@ -150,6 +150,9 @@ interface ExpenseRow {
   source_type: Expense['sourceType'];
   source_file_name: string;
   ai_confidence: Expense['aiConfidence'];
+  is_purchase: boolean;
+  received_at: string | null;
+  received_by_email: string;
   created_at: string;
   updated_at: string;
 }
@@ -176,6 +179,9 @@ const toExpense = (r: ExpenseRow): Expense => ({
   sourceType: r.source_type,
   sourceFileName: r.source_file_name,
   aiConfidence: r.ai_confidence,
+  isPurchase: r.is_purchase,
+  receivedAt: r.received_at ? Date.parse(r.received_at) : null,
+  receivedByEmail: r.received_by_email,
   createdAt: Date.parse(r.created_at),
   updatedAt: Date.parse(r.updated_at),
 });
@@ -192,6 +198,7 @@ const EXPENSE_COLUMNS: Record<keyof ExpenseInput, string> = {
   sourceType: 'source_type',
   sourceFileName: 'source_file_name',
   aiConfidence: 'ai_confidence',
+  isPurchase: 'is_purchase',
 };
 
 const toExpenseRow = (e: Partial<ExpenseInput>) =>
@@ -338,6 +345,20 @@ export function createCloudStore(uid: string): DataStore {
     async deleteCategory(id) {
       check(await sb.from('categories').delete().eq('id', id));
       await loadCategories();
+    },
+    async setReceived(id, received) {
+      const { data } = await sb.auth.getSession();
+      check(
+        await sb
+          .from('expenses')
+          .update(
+            received
+              ? { received_at: new Date().toISOString(), received_by_email: data.session?.user.email ?? '' }
+              : { received_at: null, received_by_email: '' },
+          )
+          .eq('id', id),
+      );
+      await loadExpenses();
     },
     async dismissDuplicate(a, b) {
       const [expense_a, expense_b] = a < b ? [a, b] : [b, a];

@@ -25,6 +25,7 @@ export function emptyDraft(categoryId: string, sourceType: SourceType = 'manual'
     sourceType,
     sourceFileName,
     aiConfidence: 'high',
+    isPurchase: false,
   };
 }
 
@@ -88,5 +89,6 @@ export async function extractExpenses(
     sourceType,
     sourceFileName: input.file?.name.slice(0, 200) ?? '',
     aiConfidence: it.confidence,
+    isPurchase: false,
   }));
 }

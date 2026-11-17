@@ -42,13 +42,14 @@ export function Registry({
         <div className="px-4 py-10 text-center text-sm text-slate-400">Нет операций, подходящих под фильтр</div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-sm">
+          <table className="w-full min-w-[880px] text-sm">
             <thead>
               <tr className="border-b border-line text-left text-xs font-semibold text-slate-500">
                 <th className="w-28 px-4 py-2 font-semibold">Дата</th>
                 <th className="px-4 py-2 font-semibold">Контрагент · назначение</th>
                 <th className="w-56 px-4 py-2 font-semibold">Направление</th>
                 <th className="w-40 px-4 py-2 text-right font-semibold">Сумма</th>
+                <th className="w-36 px-4 py-2 font-semibold">Статус</th>
                 <th className="w-36 px-4 py-2" />
               </tr>
             </thead>
@@ -78,6 +79,17 @@ export function Registry({
                     </select>
                   </td>
                   <td className="num px-4 py-2.5 text-right align-top font-medium whitespace-nowrap">{formatRub(e.amount)}</td>
+                  <td className="px-4 py-2.5 align-top text-[13px] whitespace-nowrap">
+                    {!e.isPurchase ? (
+                      <span className="text-slate-400">—</span>
+                    ) : e.receivedAt ? (
+                      <span title={e.receivedByEmail}>
+                        <span className="text-ok">Получено</span> <span className="num text-slate-500">{new Date(e.receivedAt).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}</span>
+                      </span>
+                    ) : (
+                      <span className="text-warn">Ожидает</span>
+                    )}
+                  </td>
                   <td className="px-4 py-2.5 text-right align-top whitespace-nowrap">
                     <button className="link mr-3" onClick={() => onOpen(e)}>
                       Детали

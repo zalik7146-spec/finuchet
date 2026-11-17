@@ -13,14 +13,16 @@ import { findDuplicatePairs } from './lib/duplicates';
 import { FilterBar } from './components/FilterBar';
 import { Login } from './components/Login';
 import { Members } from './components/Members';
+import { Purchases } from './components/Purchases';
 import { Registry } from './components/Registry';
 import { ReviewDialog, ReviewSkeleton } from './components/ReviewDialog';
 import { Confirm, Toasts, type Toast } from './components/ui';
 
-type View = 'dashboard' | 'registry' | 'categories' | 'members';
+type View = 'dashboard' | 'registry' | 'purchases' | 'categories' | 'members';
 const VIEWS: { id: View; label: string }[] = [
   { id: 'dashboard', label: 'Обзор' },
   { id: 'registry', label: 'Реестр заявок' },
+  { id: 'purchases', label: 'Закупки' },
   { id: 'categories', label: 'Направления' },
   ...(cloudEnabled ? [{ id: 'members' as const, label: 'Участники' }] : []),
 ];
@@ -157,6 +159,7 @@ export default function App() {
     sourceType: d.sourceType,
     sourceFileName: d.sourceFileName,
     aiConfidence: d.aiConfidence,
+    isPurchase: d.isPurchase,
   });
 
   const saveDrafts = async (drafts: Draft[]) => {
@@ -186,6 +189,7 @@ export default function App() {
           sourceType: e.sourceType,
           sourceFileName: e.sourceFileName,
           aiConfidence: e.aiConfidence,
+          isPurchase: e.isPurchase,
         },
       ],
     });
@@ -194,6 +198,10 @@ export default function App() {
     const cat = categories.find((c) => c.id === categoryId);
     if (!cat || !store) return;
     run(() => store.updateExpense(e.id, { categoryId: cat.id, categoryName: cat.name }), `Направление изменено: ${cat.name}.`);
+  };
+
+  const toggleReceived = (id: string, received: boolean) => {
+    if (store) run(() => store.setReceived(id, received), received ? 'Отмечено: получено.' : 'Отметка о получении снята.');
   };
 
   const toggleCategory = (id: string) =>
@@ -343,7 +351,9 @@ export default function App() {
             </p>
           )}
 
-          {view === 'members' ? (
+          {view === 'purchases' ? (
+            <Purchases expenses={expenses} onReceived={(e) => toggleReceived(e.id, true)} />
+          ) : view === 'members' ? (
             <Members currentEmail={user.email} onNotify={notify} />
           ) : view === 'categories' ? (
             <Categories categories={categories} expenses={expenses} onSave={saveCategory} onDelete={requestDeleteCategory} />
@@ -399,7 +409,7 @@ export default function App() {
 
       {review?.state === 'loading' && <ReviewSkeleton source={review.source} onClose={closeReview} />}
       {review?.state === 'ready' && (
-        <ReviewDialog key={review.drafts[0]?.key ?? 'empty'} mode={review.mode} initial={review.drafts} categories={categories} expenses={expenses} onSave={saveDrafts} onClose={closeReview} />
+        <ReviewDialog key={review.drafts[0]?.key ?? 'empty'} mode={review.mode} initial={review.drafts} categories={categories} expenses={expenses} onToggleReceived={toggleReceived} onSave={saveDrafts} onClose={closeReview} />
       )}
 
       {toDelete && (

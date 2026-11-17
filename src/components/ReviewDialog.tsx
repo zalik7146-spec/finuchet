@@ -48,6 +48,7 @@ export function ReviewDialog({
   initial,
   categories,
   expenses,
+  onToggleReceived,
   onSave,
   onClose,
 }: {
@@ -56,6 +57,8 @@ export function ReviewDialog({
   categories: Category[];
   /** Сохранённые расходы — для предупреждения о дублях. */
   expenses: Expense[];
+  /** Отметка «Получено» у сохранённого расхода (режим редактирования). */
+  onToggleReceived?: (id: string, received: boolean) => void;
   onSave: (drafts: Draft[]) => Promise<void>;
   onClose: () => void;
 }) {
@@ -184,6 +187,33 @@ export function ReviewDialog({
               <Label text="Назначение / позиции" className="col-span-2 sm:col-span-6">
                 <textarea className="field" rows={2} maxLength={500} value={d.description} onChange={(e) => patch(d.key, { description: e.target.value })} />
               </Label>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+              <label className="flex cursor-pointer items-center gap-2">
+                <input type="checkbox" className="h-4 w-4 accent-[#2563EB]" checked={d.isPurchase} onChange={(e) => patch(d.key, { isPurchase: e.target.checked })} />
+                Покупка товара
+              </label>
+              {(() => {
+                const saved = d.id ? expenses.find((x) => x.id === d.id) : undefined;
+                if (!saved?.isPurchase || !onToggleReceived) return d.isPurchase ? <span className="text-[13px] text-slate-500">после сохранения — «Ожидает получения»</span> : null;
+                return saved.receivedAt ? (
+                  <span className="text-[13px]">
+                    <span className="font-semibold text-ok">Получено</span>{' '}
+                    <span className="num text-slate-600">{new Date(saved.receivedAt).toLocaleDateString('ru-RU')}</span>
+                    {saved.receivedByEmail && <span className="text-slate-500"> · {saved.receivedByEmail}</span>}{' '}
+                    <button className="link ml-2" onClick={() => onToggleReceived(saved.id, false)}>
+                      Снять отметку
+                    </button>
+                  </span>
+                ) : (
+                  <span className="text-[13px]">
+                    <span className="font-semibold text-warn">Ожидает получения</span>{' '}
+                    <button className="link ml-2" onClick={() => onToggleReceived(saved.id, true)}>
+                      Отметить «Получено»
+                    </button>
+                  </span>
+                );
+              })()}
             </div>
             {savedMatches.map((m) => (
               <div key={m.id} className="mt-3 flex flex-wrap items-baseline gap-x-3 text-[13px]" role="note">

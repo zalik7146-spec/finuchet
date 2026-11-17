@@ -15,7 +15,13 @@ interface State {
 function normalize(raw: Partial<State>): State {
   return {
     categories: raw.categories ?? [],
-    expenses: raw.expenses ?? [],
+    // Записи, сохранённые до появления статуса покупки, получают значения по умолчанию
+    expenses: (raw.expenses ?? []).map((e: Partial<Expense>) => ({
+      ...(e as Expense),
+      isPurchase: e.isPurchase ?? false,
+      receivedAt: e.receivedAt ?? null,
+      receivedByEmail: e.receivedByEmail ?? '',
+    })),
     dismissals: raw.dismissals ?? [],
     seeded: raw.seeded ?? false,
   };
@@ -91,7 +97,10 @@ export function createLocalStore(): DataStore {
       const now = Date.now();
       commit({
         ...state,
-        expenses: [...state.expenses, ...items.map((it, i) => ({ ...it, id: uid(), createdAt: now + i, updatedAt: now + i }))],
+        expenses: [
+          ...state.expenses,
+          ...items.map((it, i) => ({ ...it, id: uid(), receivedAt: null, receivedByEmail: '', createdAt: now + i, updatedAt: now + i })),
+        ],
       });
     },
     async updateExpense(id, patch) {
@@ -125,6 +134,10 @@ export function createLocalStore(): DataStore {
     },
     async deleteCategory(id) {
       commit({ ...state, categories: state.categories.filter((c) => c.id !== id) });
+    },
+    async setReceived(id, received) {
+      const patch = received ? { receivedAt: Date.now(), receivedByEmail: 'демо-режим' } : { receivedAt: null, receivedByEmail: '' };
+      commit({ ...state, expenses: state.expenses.map((e) => (e.id === id ? { ...e, ...patch } : e)) });
     },
     async dismissDuplicate(a, b) {
       const key = pairKey(a, b);

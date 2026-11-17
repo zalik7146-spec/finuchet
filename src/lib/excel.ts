@@ -1,7 +1,7 @@
 import type { Worksheet } from 'exceljs';
 import type { Category, Expense, Filter } from '../types';
 import { periodLabel, periodRange, sumAmounts, timeline, totalsByCategory } from './filters';
-import { CONFIDENCE_LABEL, SOURCE_LABEL, formatBucket, todayIso } from './format';
+import { CONFIDENCE_LABEL, SOURCE_LABEL, formatBucket, toIso, todayIso } from './format';
 
 const RUB = '#,##0.00 "₽"';
 const REGISTRY = 'Детальный реестр';
@@ -64,7 +64,7 @@ export async function downloadExcel(expenses: Expense[], categories: Category[],
   const dynamics = wb.addWorksheet('Динамика по периодам');
 
   // --- Детальный реестр ---
-  registry.addRow(['Дата', 'Контрагент', 'Назначение', '№ документа', 'Направление', 'Сумма', 'Источник', 'Уверенность ИИ']);
+  registry.addRow(['Дата', 'Контрагент', 'Назначение', '№ документа', 'Направление', 'Сумма', 'Источник', 'Уверенность ИИ', 'Покупка', 'Получено']);
   const sorted = [...expenses].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.createdAt - b.createdAt));
   for (const e of sorted) {
     registry.addRow([
@@ -76,16 +76,20 @@ export async function downloadExcel(expenses: Expense[], categories: Category[],
       e.amount,
       SOURCE_LABEL[e.sourceType],
       e.sourceType === 'manual' ? '—' : CONFIDENCE_LABEL[e.aiConfidence],
+      e.isPurchase ? 'да' : '',
+      e.isPurchase && e.receivedAt ? isoToUtcDate(toIso(new Date(e.receivedAt))) : e.isPurchase ? 'ожидает' : '',
     ]);
   }
   const regTotal = registry.addRow(['Итого', '', '', '', '', { formula: `SUM(F${firstRow}:F${lastRow})`, result: total }]);
   registry.getColumn(1).numFmt = 'dd.mm.yyyy';
   registry.getColumn(1).alignment = { horizontal: 'left' };
+  registry.getColumn(10).numFmt = 'dd.mm.yyyy';
+  registry.getColumn(10).alignment = { horizontal: 'left' };
   registry.getColumn(6).numFmt = RUB;
   registry.getColumn(3).alignment = { wrapText: true, vertical: 'top' };
   styleHeader(registry);
   styleTotal(registry, regTotal.number);
-  registry.autoFilter = { from: 'A1', to: `H${lastRow}` };
+  registry.autoFilter = { from: 'A1', to: `J${lastRow}` };
   autoWidth(registry, [6]);
 
   // --- Сводка по направлениям ---

@@ -54,6 +54,15 @@ export function applyFilter(expenses: Expense[], f: Filter): Expense[] {
     .sort((a, b) => (a.date === b.date ? b.createdAt - a.createdAt : a.date < b.date ? 1 : -1));
 }
 
+/** Покупки, которые ещё не получены; сверху — те, что ждём дольше всего (от даты документа). */
+export function awaitingReceipt(expenses: Expense[], today = toIso(new Date())): Array<{ expense: Expense; waitingDays: number }> {
+  const t = parse(today).getTime();
+  return expenses
+    .filter((e) => e.isPurchase && e.receivedAt === null)
+    .map((expense) => ({ expense, waitingDays: Math.max(0, Math.round((t - parse(expense.date).getTime()) / DAY)) }))
+    .sort((a, b) => b.waitingDays - a.waitingDays);
+}
+
 /** Последние добавленные в программу — сверху, независимо от даты документа. */
 export function recentFirst(expenses: Expense[]): Expense[] {
   return [...expenses].sort((a, b) => b.createdAt - a.createdAt);

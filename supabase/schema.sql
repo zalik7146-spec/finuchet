@@ -33,12 +33,16 @@ create table public.expenses (
   source_type text not null check (source_type in ('pdf', 'image', 'text', 'manual')),
   source_file_name text not null default '' check (char_length(source_file_name) <= 200),
   ai_confidence text not null check (ai_confidence in ('high', 'medium', 'low')),
+  is_purchase boolean not null default false,
+  received_at timestamptz,
+  received_by_email text not null default '' check (char_length(received_by_email) <= 254),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 create index expenses_date_idx on public.expenses (date desc);
 create index expenses_category_idx on public.expenses (category_id);
+create index expenses_awaiting_idx on public.expenses (date) where is_purchase and received_at is null;
 create index expenses_created_by_idx on public.expenses (created_by);
 create index categories_created_by_idx on public.categories (created_by);
 
