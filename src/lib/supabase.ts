@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import type { AppUser, Category, DataStore, Expense, ExpenseInput } from '../types';
+import type { AppUser, BaseUnit, Category, DataStore, Expense, ExpenseInput, ExpenseLine, ExpenseLineInput, Product } from '../types';
 import { DEFAULT_CATEGORIES } from './defaults';
 import { pairKey } from './duplicates';
 
@@ -157,6 +157,58 @@ interface ExpenseRow {
   updated_at: string;
 }
 
+interface ProductRow {
+  id: string;
+  name: string;
+  unit: BaseUnit;
+  aliases: string[];
+  created_at: string;
+}
+
+interface LineRow {
+  id: string;
+  expense_id: string;
+  position: number;
+  raw_name: string;
+  product_id: string | null;
+  doc_quantity: number | string | null;
+  doc_unit: string;
+  base_quantity: number | string | null;
+  line_total: number | string;
+}
+
+const toProduct = (r: ProductRow): Product => ({
+  id: r.id,
+  name: r.name,
+  unit: r.unit,
+  aliases: r.aliases ?? [],
+  createdAt: Date.parse(r.created_at),
+});
+
+const numOrNull = (v: number | string | null) => (v === null ? null : Number(v));
+
+const toLine = (r: LineRow): ExpenseLine => ({
+  id: r.id,
+  expenseId: r.expense_id,
+  position: r.position,
+  rawName: r.raw_name,
+  productId: r.product_id,
+  docQuantity: numOrNull(r.doc_quantity),
+  docUnit: r.doc_unit,
+  baseQuantity: numOrNull(r.base_quantity),
+  lineTotal: Number(r.line_total),
+});
+
+const toLineRow = (l: ExpenseLineInput, position: number) => ({
+  position,
+  raw_name: l.rawName,
+  product_id: l.productId,
+  doc_quantity: l.docQuantity,
+  doc_unit: l.docUnit,
+  base_quantity: l.baseQuantity,
+  line_total: l.lineTotal,
+});
+
 const toCategory = (r: CategoryRow): Category => ({
   id: r.id,
   name: r.name,
@@ -186,7 +238,7 @@ const toExpense = (r: ExpenseRow): Expense => ({
   updatedAt: Date.parse(r.updated_at),
 });
 
-const EXPENSE_COLUMNS: Record<keyof ExpenseInput, string> = {
+const EXPENSE_COLUMNS: Record<Exclude<keyof ExpenseInput, 'lines'>, string> = {
   date: 'date',
   amount: 'amount',
   currency: 'currency',
@@ -201,8 +253,8 @@ const EXPENSE_COLUMNS: Record<keyof ExpenseInput, string> = {
   isPurchase: 'is_purchase',
 };
 
-const toExpenseRow = (e: Partial<ExpenseInput>) =>
-  Object.fromEntries(Object.entries(e).map(([k, v]) => [EXPENSE_COLUMNS[k as keyof ExpenseInput], v]));
+const toExpenseRow = ({ lines: _lines, ...e }: Partial<ExpenseInput>) =>
+  Object.fromEntries(Object.entries(e).map(([k, v]) => [EXPENSE_COLUMNS[k as Exclude<keyof ExpenseInput, 'lines'>], v]));
 
 const PAGE = 1000;
 
@@ -273,6 +325,8 @@ export function createCloudStore(uid: string): DataStore {
     ['expense_a', 'expense_b'],
     (rows) => new Set(rows.map((r) => pairKey(r.expense_a, r.expense_b))),
   );
+  const productsFeed = tableFeed<ProductRow, Product[]>('products', ['name'], (rows) => rows.map(toProduct));
+  const linesFeed = tableFeed<LineRow, ExpenseLine[]>('expense_items', ['expense_id', 'position', 'id'], (rows) => rows.map(toLine));
   const loadCategories = categoriesFeed.reload;
   const loadExpenses = expensesFeed.reload;
 
@@ -307,12 +361,29 @@ export function createCloudStore(uid: string): DataStore {
     subscribeCategories: categoriesFeed.subscribe,
     subscribeExpenses: expensesFeed.subscribe,
     subscribeDismissals: dismissalsFeed.subscribe,
+    subscribeProducts: productsFeed.subscribe,
+    subscribeLines: linesFeed.subscribe,
     async addExpenses(items) {
-      check(await sb.from('expenses').insert(items.map(toExpenseRow)));
+      const { data } = check(await sb.from('expenses').insert(items.map(toExpenseRow)).select('id'));
+      const ids = (data ?? []).map((r) => r.id as string);
+      const rows = items.flatMap((it, i) => (it.lines ?? []).map((l, pos) => ({ ...toLineRow(l, pos), expense_id: ids[i] })));
+      if (rows.length) {
+        const res = await sb.from('expense_items').insert(rows);
+        if (res.error) {
+          // Расход без позиций хуже, чем понятная ошибка: откатываем вставку
+          await sb.from('expenses').delete().in('id', ids);
+          throw res.error;
+        }
+        await linesFeed.reload();
+      }
       await loadExpenses();
     },
     async updateExpense(id, patch) {
       check(await sb.from('expenses').update(toExpenseRow(patch)).eq('id', id));
+      if (patch.lines !== undefined) {
+        check(await sb.rpc('replace_expense_items', { target_expense: id, lines: patch.lines.map((l, pos) => toLineRow(l, pos)) }));
+        await linesFeed.reload();
+      }
       await loadExpenses();
     },
     async deleteExpense(id) {
@@ -359,6 +430,29 @@ export function createCloudStore(uid: string): DataStore {
           .eq('id', id),
       );
       await loadExpenses();
+    },
+    async addProduct(p) {
+      const { data } = check(
+        await sb
+          .from('products')
+          .insert({ name: p.name.trim(), unit: p.unit, aliases: p.aliases ?? [] })
+          .select('*')
+          .single(),
+      );
+      await productsFeed.reload();
+      return toProduct(data as ProductRow);
+    },
+    async updateProduct(id, patch) {
+      check(await sb.from('products').update({ ...patch, ...(patch.name !== undefined ? { name: patch.name.trim() } : {}) }).eq('id', id));
+      await productsFeed.reload();
+    },
+    async deleteProduct(id) {
+      check(await sb.from('products').delete().eq('id', id));
+      await productsFeed.reload();
+    },
+    async mergeProducts(fromId, intoId) {
+      check(await sb.rpc('merge_products', { from_id: fromId, into_id: intoId }));
+      await Promise.all([productsFeed.reload(), linesFeed.reload()]);
     },
     async dismissDuplicate(a, b) {
       const [expense_a, expense_b] = a < b ? [a, b] : [b, a];

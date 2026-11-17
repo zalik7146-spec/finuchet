@@ -1,6 +1,33 @@
 export type Confidence = 'high' | 'medium' | 'low';
 export type SourceType = 'pdf' | 'image' | 'text' | 'excel' | 'manual';
 
+export type BaseUnit = 'кг' | 'л' | 'шт' | 'м' | 'уп';
+export const BASE_UNITS: BaseUnit[] = ['кг', 'л', 'шт', 'м', 'уп'];
+
+/** Товар из справочника: все закупки сравниваются в его базовой единице. */
+export interface Product {
+  id: string;
+  name: string;
+  unit: BaseUnit;
+  aliases: string[];
+  createdAt: number;
+}
+
+/** Строка документа. productId === null — «не товар» (услуга, доставка). */
+export interface ExpenseLine {
+  id: string;
+  expenseId: string;
+  position: number;
+  rawName: string;
+  productId: string | null;
+  docQuantity: number | null;
+  docUnit: string;
+  baseQuantity: number | null;
+  lineTotal: number;
+}
+
+export type ExpenseLineInput = Omit<ExpenseLine, 'id' | 'expenseId'>;
+
 export interface Category {
   id: string;
   name: string;
@@ -24,6 +51,8 @@ export interface ExpenseInput {
   aiConfidence: Confidence;
   /** Покупка товара: ждём поставку, по факту отмечаем «Получено». */
   isPurchase: boolean;
+  /** Позиции документа; при updateExpense заменяют прежние целиком. Не передано — позиции не трогаются. */
+  lines?: ExpenseLineInput[];
 }
 
 export interface Expense extends ExpenseInput {
@@ -83,4 +112,11 @@ export interface DataStore {
   dismissDuplicate(a: string, b: string): Promise<void>;
   /** Ставит или снимает отметку «Получено» (дата и почта текущего пользователя). */
   setReceived(id: string, received: boolean): Promise<void>;
+  subscribeProducts(cb: (items: Product[]) => void, onError: (e: unknown) => void): () => void;
+  subscribeLines(cb: (items: ExpenseLine[]) => void, onError: (e: unknown) => void): () => void;
+  addProduct(p: { name: string; unit: BaseUnit; aliases?: string[] }): Promise<Product>;
+  updateProduct(id: string, patch: { name?: string; unit?: BaseUnit; aliases?: string[] }): Promise<void>;
+  deleteProduct(id: string): Promise<void>;
+  /** Переносит позиции и алиасы товара fromId в intoId и удаляет fromId. */
+  mergeProducts(fromId: string, intoId: string): Promise<void>;
 }
