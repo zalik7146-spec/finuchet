@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AppUser, Category, DataStore, Draft, Expense, ExpenseInput, ExpenseLine, Filter, Product } from './types';
+import type { AppUser, Category, DataStore, Draft, DraftLine, Expense, ExpenseInput, ExpenseLine, Filter, Product } from './types';
 import { NoAccessError, cloudEnabled, configError, createCloudStore, describeError, getAccessToken, signOut, watchAuth } from './lib/supabase';
 import { createLocalStore } from './lib/localStore';
 import { emptyDraft, extractExpenses, newKey } from './lib/extract';
 import { applyFilter, periodLabel, recentFirst } from './lib/filters';
-import { amountToInput, parseAmount } from './lib/format';
+import { amountToInput, isValidIsoDate, parseAmount } from './lib/format';
 import { Capture } from './components/Capture';
 import { Categories } from './components/Categories';
 import { Dashboard } from './components/Dashboard';
 import { Duplicates } from './components/Duplicates';
 import { findDuplicatePairs } from './lib/duplicates';
-import { aliasUpdates, draftLinesToInput, lineToDraft, newProductsToCreate } from './lib/draftLines';
+import { aliasUpdates, draftLinesToInput, lineToDraft, lineUnitPrice, newProductsToCreate } from './lib/draftLines';
+import { priceInsight, pricePoints } from './lib/prices';
+import { ExpenseView } from './components/ExpenseView';
+import { PriceHint } from './components/PriceHint';
 import { FilterBar } from './components/FilterBar';
 import { Login } from './components/Login';
 import { Members } from './components/Members';
@@ -123,6 +126,17 @@ export default function App() {
   // Единый срез: от него работают KPI, графики, таблица и экспорт в Excel
   const filteredExpenses = useMemo(() => applyFilter(expenses, filter), [expenses, filter]);
   const duplicatePairs = useMemo(() => findDuplicatePairs(expenses, dismissals), [expenses, dismissals]);
+  const points = useMemo(() => pricePoints(lines, expenses), [lines, expenses]);
+  const [viewingId, setViewingId] = useState<string | null>(null);
+  const viewing = viewingId ? expenses.find((e) => e.id === viewingId) : undefined;
+
+  /** «В прошлый раз дешевле»: сравнение строки черновика с прошлыми закупками того же товара. */
+  const renderLineHint = (draft: Draft, line: DraftLine, product: Product | null) => {
+    if (!product || line.notGoods || !isValidIsoDate(draft.date)) return null;
+    const price = lineUnitPrice(line);
+    if (price === null) return null;
+    return <PriceHint insight={priceInsight(product.id, price, draft.date, points, draft.id)} unit={product.unit} onOpen={setViewingId} />;
+  };
 
   const run = async (action: () => Promise<void>, okText?: string) => {
     try {
@@ -441,7 +455,7 @@ export default function App() {
 
       {review?.state === 'loading' && <ReviewSkeleton source={review.source} onClose={closeReview} />}
       {review?.state === 'ready' && (
-        <ReviewDialog key={review.drafts[0]?.key ?? 'empty'} mode={review.mode} initial={review.drafts} categories={categories} products={products} expenses={expenses} onToggleReceived={toggleReceived} onSave={saveDrafts} onClose={closeReview} />
+        <ReviewDialog key={review.drafts[0]?.key ?? 'empty'} mode={review.mode} initial={review.drafts} categories={categories} products={products} renderLineHint={renderLineHint} expenses={expenses} onToggleReceived={toggleReceived} onSave={saveDrafts} onClose={closeReview} />
       )}
 
       {toDelete && (
@@ -472,6 +486,7 @@ export default function App() {
         />
       )}
 
+      {viewing && <ExpenseView expense={viewing} onClose={() => setViewingId(null)} />}
       <Toasts items={toasts} onDismiss={dismiss} />
     </div>
   );
