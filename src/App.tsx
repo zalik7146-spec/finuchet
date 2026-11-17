@@ -3,7 +3,7 @@ import type { AppUser, Category, DataStore, Draft, Expense, ExpenseInput, Filter
 import { NoAccessError, cloudEnabled, configError, createCloudStore, describeError, getAccessToken, signOut, watchAuth } from './lib/supabase';
 import { createLocalStore } from './lib/localStore';
 import { emptyDraft, extractExpenses, newKey } from './lib/extract';
-import { applyFilter, periodLabel } from './lib/filters';
+import { applyFilter, periodLabel, recentFirst } from './lib/filters';
 import { amountToInput, parseAmount } from './lib/format';
 import { Capture } from './components/Capture';
 import { Categories } from './components/Categories';
@@ -362,15 +362,15 @@ export default function App() {
                   {view === 'dashboard' ? (
                     <>
                       {loading ? (
-                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-busy="true">
-                          {[0, 1, 2, 3].map((i) => (
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3" aria-busy="true">
+                          {[0, 1, 2].map((i) => (
                             <div key={i} className="skeleton h-[84px]" />
                           ))}
                         </div>
                       ) : (
                         <Dashboard expenses={filteredExpenses} categories={categories} filter={filter} onToggleCategory={toggleCategory} />
                       )}
-                      <Registry {...registryProps} expenses={filteredExpenses} limit={8} onShowAll={() => setView('registry')} />
+                      <Registry {...registryProps} expenses={recentFirst(filteredExpenses)} limit={8} onShowAll={() => setView('registry')} />
                     </>
                   ) : (
                     <Registry {...registryProps} expenses={filteredExpenses} />

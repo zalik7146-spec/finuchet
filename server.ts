@@ -3,6 +3,7 @@ import multer from 'multer';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GoogleGenAI, Type } from '@google/genai';
+import { finalConfidence, type Confidence } from './server/confidence';
 
 try {
   process.loadEnvFile();
@@ -78,7 +79,7 @@ function buildPrompt(categories: CategoryRef[], text: string, hasFile: boolean):
     '- documentNumber — номер счёта, чека или накладной; если нет — пустая строка.',
     '- description — краткое назначение платежа на русском, до 200 символов.',
     '- categoryId — строго один из id направлений из списка ниже, наиболее подходящий по смыслу.',
-    '- confidence — high, если все поля читаются однозначно; medium, если что-то пришлось додумывать; low, если документ неразборчив или сумма сомнительна.',
+    '- confidence — high только если сумма, дата и контрагент прочитаны однозначно, без догадок; medium, если хоть что-то пришлось додумывать или выбирать из нескольких вариантов; low, если документ неразборчив или сумма сомнительна. Не ставь high по умолчанию.',
     '- Если расходов нет, верни пустой список items.',
     '',
     'Направления расходов:',
@@ -97,15 +98,23 @@ function sanitizeItems(raw: unknown, categories: CategoryRef[]) {
       const o = (it ?? {}) as Record<string, unknown>;
       const amount = Math.round(Number(o.amount) * 100) / 100;
       const date = str(o.date, 10);
-      const confidence = str(o.confidence, 10);
+      const dateValid = /^\d{4}-\d{2}-\d{2}$/.test(date) && !Number.isNaN(Date.parse(date));
+      const vendor = str(o.vendor, 120);
+      const raw = str(o.confidence, 10);
+      const modelConfidence: Confidence = raw === 'high' || raw === 'medium' ? raw : 'low';
       return {
-        vendor: str(o.vendor, 120),
-        date: /^\d{4}-\d{2}-\d{2}$/.test(date) && !Number.isNaN(Date.parse(date)) ? date : todayIso(),
+        vendor,
+        date: dateValid ? date : todayIso(),
         amount,
         description: str(o.description, 500),
         documentNumber: str(o.documentNumber, 60),
         categoryId: ids.has(str(o.categoryId, 80)) ? str(o.categoryId, 80) : fallback,
-        confidence: confidence === 'high' || confidence === 'medium' ? confidence : 'low',
+        confidence: finalConfidence(modelConfidence, {
+          vendorEmpty: !vendor,
+          dateDefaulted: !dateValid,
+          linesMismatch: false,
+          unclearNewProduct: false,
+        }),
       };
     })
     .filter((it) => Number.isFinite(it.amount) && it.amount > 0)

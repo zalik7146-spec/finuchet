@@ -54,6 +54,11 @@ export function applyFilter(expenses: Expense[], f: Filter): Expense[] {
     .sort((a, b) => (a.date === b.date ? b.createdAt - a.createdAt : a.date < b.date ? 1 : -1));
 }
 
+/** Последние добавленные в программу — сверху, независимо от даты документа. */
+export function recentFirst(expenses: Expense[]): Expense[] {
+  return [...expenses].sort((a, b) => b.createdAt - a.createdAt);
+}
+
 export interface CategoryTotal {
   id: string;
   name: string;

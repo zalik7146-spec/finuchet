@@ -36,10 +36,9 @@ export function Dashboard({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Kpi label="Общая сумма" value={formatRub(total)} />
         <Kpi label="Количество заявок" value={String(count)} />
-        <Kpi label="Средний чек" value={formatRub(count ? total / count : 0)} />
         <Kpi label="Топ-направление" value={top?.name ?? '—'} hint={top ? `${formatRub(top.total)} · ${(top.share * 100).toFixed(1)}%` : undefined} mono={false} />
       </div>
 
