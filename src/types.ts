@@ -63,6 +63,20 @@ export interface Expense extends ExpenseInput {
   updatedAt: number;
 }
 
+/** Редактируемая строка документа на экране проверки. Числа — строками, как их вводит пользователь. */
+export interface DraftLine {
+  key: string;
+  rawName: string;
+  productId: string | null;
+  notGoods: boolean;
+  /** Товар, которого ещё нет в справочнике: будет создан при сохранении. */
+  newProduct?: { name: string; unit: BaseUnit };
+  docQuantity: string;
+  docUnit: string;
+  baseQuantity: string;
+  lineTotal: string;
+}
+
 /** Редактируемый черновик на экране проверки. */
 export interface Draft {
   key: string;
@@ -77,6 +91,9 @@ export interface Draft {
   sourceFileName: string;
   aiConfidence: Confidence;
   isPurchase: boolean;
+  /** Пользователь сам ставил или снимал «Покупка товара» — больше не переключаем автоматически. */
+  purchaseTouched?: boolean;
+  lines: DraftLine[];
 }
 
 export type PeriodPreset = 'thisMonth' | 'lastMonth' | 'quarter' | 'year' | 'all' | 'custom';

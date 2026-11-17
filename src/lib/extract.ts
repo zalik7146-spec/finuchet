@@ -1,5 +1,6 @@
-import type { Category, Confidence, Draft, SourceType } from '../types';
+import type { BaseUnit, Category, Confidence, Draft, DraftLine, Product, SourceType } from '../types';
 import { amountToInput, todayIso } from './format';
+import { quantityToInput } from './draftLines';
 
 export const MAX_FILE_BYTES = 15 * 1024 * 1024;
 export const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -31,6 +32,38 @@ export function emptyDraft(categoryId: string, sourceType: SourceType = 'manual'
     sourceFileName,
     aiConfidence: 'high',
     isPurchase: false,
+    lines: [],
+  };
+}
+
+/** Пустая строка позиции для ручного добавления. */
+export function emptyLine(): DraftLine {
+  return { key: newKey(), rawName: '', productId: null, notGoods: false, docQuantity: '', docUnit: '', baseQuantity: '', lineTotal: '' };
+}
+
+interface ExtractedLine {
+  rawName: string;
+  docQuantity: number | null;
+  docUnit: string;
+  baseQuantity: number | null;
+  lineTotal: number;
+  productId: string | null;
+  notGoods: boolean;
+  suggestedName: string;
+  suggestedUnit: BaseUnit | '';
+}
+
+function toDraftLine(l: ExtractedLine): DraftLine {
+  return {
+    key: newKey(),
+    rawName: l.rawName,
+    productId: l.productId,
+    notGoods: l.notGoods,
+    newProduct: !l.notGoods && !l.productId && l.suggestedName ? { name: l.suggestedName, unit: l.suggestedUnit || 'шт' } : undefined,
+    docQuantity: quantityToInput(l.docQuantity),
+    docUnit: l.docUnit,
+    baseQuantity: quantityToInput(l.baseQuantity),
+    lineTotal: amountToInput(l.lineTotal),
   };
 }
 
@@ -42,17 +75,20 @@ interface ExtractedItem {
   documentNumber: string;
   categoryId: string;
   confidence: Confidence;
+  lines?: ExtractedLine[];
 }
 
 export async function extractExpenses(
   input: { file?: File; text?: string },
   categories: Category[],
+  products: Product[],
   accessToken?: string | null,
 ): Promise<Draft[]> {
   const body = new FormData();
   if (input.file) body.append('file', input.file);
   if (input.text) body.append('text', input.text);
   body.append('categories', JSON.stringify(categories.map((c) => ({ id: c.id, name: c.name }))));
+  body.append('products', JSON.stringify(products.map((p) => ({ id: p.id, name: p.name, unit: p.unit, aliases: p.aliases.slice(0, 3) }))));
 
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), 90_000);
@@ -94,6 +130,8 @@ export async function extractExpenses(
     sourceType,
     sourceFileName: input.file?.name.slice(0, 200) ?? '',
     aiConfidence: it.confidence,
-    isPurchase: false,
+    // Покупка товара — если среди строк есть товар
+    isPurchase: (it.lines ?? []).some((l) => !l.notGoods),
+    lines: (it.lines ?? []).map(toDraftLine),
   }));
 }

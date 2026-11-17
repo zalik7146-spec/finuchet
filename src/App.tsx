@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AppUser, Category, DataStore, Draft, Expense, ExpenseInput, Filter } from './types';
+import type { AppUser, Category, DataStore, Draft, Expense, ExpenseInput, ExpenseLine, Filter, Product } from './types';
 import { NoAccessError, cloudEnabled, configError, createCloudStore, describeError, getAccessToken, signOut, watchAuth } from './lib/supabase';
 import { createLocalStore } from './lib/localStore';
 import { emptyDraft, extractExpenses, newKey } from './lib/extract';
@@ -10,6 +10,7 @@ import { Categories } from './components/Categories';
 import { Dashboard } from './components/Dashboard';
 import { Duplicates } from './components/Duplicates';
 import { findDuplicatePairs } from './lib/duplicates';
+import { aliasUpdates, draftLinesToInput, lineToDraft, newProductsToCreate } from './lib/draftLines';
 import { FilterBar } from './components/FilterBar';
 import { Login } from './components/Login';
 import { Members } from './components/Members';
@@ -37,6 +38,8 @@ export default function App() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [dismissals, setDismissals] = useState<Set<string>>(new Set());
+  const [products, setProducts] = useState<Product[]>([]);
+  const [lines, setLines] = useState<ExpenseLine[]>([]);
   const [loading, setLoading] = useState(true);
   const [noAccess, setNoAccess] = useState(false);
   const [view, setView] = useState<View>('dashboard');
@@ -81,6 +84,8 @@ export default function App() {
     setNoAccess(false);
     setCategories([]);
     setDismissals(new Set());
+    setProducts([]);
+    setLines([]);
     setExpenses([]);
     store
       .init()
@@ -97,6 +102,8 @@ export default function App() {
         if (cancelled || !proceed) return;
         unsubs = [
           store.subscribeDismissals(setDismissals, fail),
+          store.subscribeProducts(setProducts, fail),
+          store.subscribeLines(setLines, fail),
           store.subscribeCategories((c) => setCategories([...c].sort((a, b) => a.createdAt - b.createdAt || a.name.localeCompare(b.name, 'ru'))), fail),
           store.subscribeExpenses((e) => {
             setExpenses(e);
@@ -132,7 +139,7 @@ export default function App() {
     const token = ++extractToken.current;
     setReview({ state: 'loading', source: input.file?.name ?? 'текстовая заметка', token });
     try {
-      const drafts = await extractExpenses(input, categories, await getAccessToken());
+      const drafts = await extractExpenses(input, categories, products, await getAccessToken());
       if (extractToken.current !== token) return; // пользователь закрыл окно
       setReview({ state: 'ready', mode: 'new', drafts });
     } catch (e) {
@@ -147,7 +154,7 @@ export default function App() {
     setReview(null);
   }, []);
 
-  const toInput = (d: Draft): ExpenseInput => ({
+  const toInput = (d: Draft, idByName: Map<string, string>): ExpenseInput => ({
     date: d.date,
     amount: parseAmount(d.amount),
     currency: 'RUB',
@@ -160,13 +167,33 @@ export default function App() {
     sourceFileName: d.sourceFileName,
     aiConfidence: d.aiConfidence,
     isPurchase: d.isPurchase,
+    lines: draftLinesToInput(d.lines, idByName),
   });
 
-  const saveDrafts = async (drafts: Draft[]) => {
+  /** Сохранение пакета: сначала новые товары справочника, затем расходы с позициями, затем новые названия в алиасы товаров. */
+  const persistDrafts = async (drafts: Draft[]) => {
     if (!store) return;
+    const idByName = new Map(products.map((p) => [p.name.trim().toLowerCase(), p.id]));
+    let catalog = products;
+    for (const np of newProductsToCreate(drafts.map((d) => d.lines), products)) {
+      const created = await store.addProduct(np);
+      idByName.set(created.name.trim().toLowerCase(), created.id);
+      catalog = [...catalog, created];
+    }
+    const inputs = drafts.map((d) => toInput(d, idByName));
+    const editing = drafts.length === 1 && drafts[0].id;
+    if (editing) await store.updateExpense(drafts[0].id!, inputs[0]);
+    else await store.addExpenses(inputs);
+    for (const [productId, extra] of aliasUpdates(inputs.map((i) => i.lines ?? []), catalog)) {
+      const p = catalog.find((x) => x.id === productId)!;
+      await store.updateProduct(productId, { aliases: [...p.aliases, ...extra] });
+    }
+  };
+
+  const saveDrafts = async (drafts: Draft[]) => {
     const editing = drafts.length === 1 && drafts[0].id;
     const ok = await run(
-      () => (editing ? store.updateExpense(drafts[0].id!, toInput(drafts[0])) : store.addExpenses(drafts.map(toInput))),
+      () => persistDrafts(drafts),
       editing ? 'Изменения сохранены.' : drafts.length === 1 ? 'Расход сохранён в базу.' : `Сохранено расходов: ${drafts.length}.`,
     );
     if (ok) setReview(null);
@@ -190,6 +217,11 @@ export default function App() {
           sourceFileName: e.sourceFileName,
           aiConfidence: e.aiConfidence,
           isPurchase: e.isPurchase,
+          purchaseTouched: true,
+          lines: lines
+            .filter((l) => l.expenseId === e.id)
+            .sort((a, b) => a.position - b.position)
+            .map(lineToDraft),
         },
       ],
     });
@@ -409,7 +441,7 @@ export default function App() {
 
       {review?.state === 'loading' && <ReviewSkeleton source={review.source} onClose={closeReview} />}
       {review?.state === 'ready' && (
-        <ReviewDialog key={review.drafts[0]?.key ?? 'empty'} mode={review.mode} initial={review.drafts} categories={categories} expenses={expenses} onToggleReceived={toggleReceived} onSave={saveDrafts} onClose={closeReview} />
+        <ReviewDialog key={review.drafts[0]?.key ?? 'empty'} mode={review.mode} initial={review.drafts} categories={categories} products={products} expenses={expenses} onToggleReceived={toggleReceived} onSave={saveDrafts} onClose={closeReview} />
       )}
 
       {toDelete && (

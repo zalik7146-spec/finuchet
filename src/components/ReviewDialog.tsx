@@ -1,5 +1,7 @@
-import { useState } from 'react';
-import type { Category, Draft, Expense } from '../types';
+import { useState, type ReactNode } from 'react';
+import type { Category, Draft, DraftLine, Expense, Product } from '../types';
+import { validateLine } from '../lib/draftLines';
+import { LinesEditor } from './LinesEditor';
 import { findMatchesFor, isDuplicate, type DupFields } from '../lib/duplicates';
 import { emptyDraft, newKey } from '../lib/extract';
 import { CONFIDENCE_LABEL, SOURCE_LABEL, amountToInput, formatDate, formatRub, isValidIsoDate, parseAmount } from '../lib/format';
@@ -47,6 +49,8 @@ export function ReviewDialog({
   mode,
   initial,
   categories,
+  products,
+  renderLineHint,
   expenses,
   onToggleReceived,
   onSave,
@@ -55,6 +59,9 @@ export function ReviewDialog({
   mode: 'new' | 'edit';
   initial: Draft[];
   categories: Category[];
+  products: Product[];
+  /** Подсказка под позицией (сравнение цен). */
+  renderLineHint?: (draft: Draft, line: DraftLine, product: Product | null) => ReactNode;
   /** Сохранённые расходы — для предупреждения о дублях. */
   expenses: Expense[];
   /** Отметка «Получено» у сохранённого расхода (режим редактирования). */
@@ -81,7 +88,7 @@ export function ReviewDialog({
         x.key === d.key
           ? [
               { ...x, amount: total > 0 ? amountToInput(first) : x.amount },
-              { ...x, key: newKey(), id: undefined, amount: total > 0 ? amountToInput(second) : '' },
+              { ...x, key: newKey(), id: undefined, lines: [], amount: total > 0 ? amountToInput(second) : '' },
             ]
           : [x],
       ),
@@ -89,7 +96,11 @@ export function ReviewDialog({
   };
 
   const errors = drafts.map((d) => validate(d, categories));
-  const hasErrors = errors.some((e) => Object.keys(e).length > 0);
+  const hasErrors = errors.some((e) => Object.keys(e).length > 0) || drafts.some((d) => d.lines.some((l) => validateLine(l) !== null));
+
+  /** Позиции изменились: «Покупка товара» следует за наличием товаров, пока пользователь не трогал галочку сам. */
+  const setLines = (d: Draft, lines: DraftLine[]) =>
+    patch(d.key, d.purchaseTouched ? { lines } : { lines, isPurchase: lines.some((l) => !l.notGoods) });
   const total = drafts.reduce((s, d) => s + (parseAmount(d.amount) || 0), 0);
   const attention = drafts.filter((d) => d.sourceType !== 'manual' && d.aiConfidence !== 'high').length;
 
@@ -188,9 +199,17 @@ export function ReviewDialog({
                 <textarea className="field" rows={2} maxLength={500} value={d.description} onChange={(e) => patch(d.key, { description: e.target.value })} />
               </Label>
             </div>
+            <LinesEditor
+              lines={d.lines}
+              products={products}
+              amount={parseAmount(d.amount) || 0}
+              showErrors={showErrors}
+              onChange={(lines) => setLines(d, lines)}
+              renderHint={renderLineHint ? (line, product) => renderLineHint(d, line, product) : undefined}
+            />
             <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
               <label className="flex cursor-pointer items-center gap-2">
-                <input type="checkbox" className="h-4 w-4 accent-[#2563EB]" checked={d.isPurchase} onChange={(e) => patch(d.key, { isPurchase: e.target.checked })} />
+                <input type="checkbox" className="h-4 w-4 accent-[#2563EB]" checked={d.isPurchase} onChange={(e) => patch(d.key, { isPurchase: e.target.checked, purchaseTouched: true })} />
                 Покупка товара
               </label>
               {(() => {

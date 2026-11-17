@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { GoogleGenAI, Type } from '@google/genai';
 import { finalConfidence, type Confidence } from './server/confidence';
 import { xlsxToText } from './server/xlsx';
+import { linesMismatch, sanitizeLines } from './server/lines';
 
 try {
   process.loadEnvFile();
@@ -72,6 +73,33 @@ function parseCategories(raw: unknown): CategoryRef[] {
     .map((c) => ({ id: c.id.slice(0, 80), name: c.name.slice(0, 80) }));
 }
 
+interface ProductRef {
+  id: string;
+  name: string;
+  unit: string;
+  aliases: string[];
+}
+
+/** Справочник товаров из запроса. Передаём модели только нужное, чтобы не замедлять распознавание. */
+function parseProducts(raw: unknown): ProductRef[] {
+  let list: unknown;
+  try {
+    list = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch {
+    list = null;
+  }
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((p): p is ProductRef => !!p && typeof p.id === 'string' && typeof p.name === 'string' && typeof p.unit === 'string')
+    .slice(0, 2000)
+    .map((p) => ({
+      id: p.id.slice(0, 80),
+      name: p.name.slice(0, 120),
+      unit: p.unit.slice(0, 5),
+      aliases: Array.isArray(p.aliases) ? p.aliases.filter((a): a is string => typeof a === 'string').slice(0, 3).map((a) => a.slice(0, 120)) : [],
+    }));
+}
+
 function todayIso(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -79,7 +107,7 @@ function todayIso(): string {
 
 type Source = 'file' | 'xlsx' | 'text';
 
-function buildPrompt(categories: CategoryRef[], text: string, source: Source): string {
+function buildPrompt(categories: CategoryRef[], products: ProductRef[], text: string, source: Source): string {
   const what =
     source === 'file'
       ? 'приложенного документа (счёт, чек, накладная)'
@@ -89,7 +117,7 @@ function buildPrompt(categories: CategoryRef[], text: string, source: Source): s
   return [
     `Ты — помощник бухгалтера. Извлеки бизнес-расходы из ${what}.`,
     'Правила:',
-    '- Каждый отдельный документ, чек или платёж — отдельный элемент items. Один счёт с несколькими позициями — это один расход с итоговой суммой к оплате (с НДС), позиции перечисли в description.',
+    '- Каждый отдельный документ, чек или платёж — отдельный элемент items. Один счёт с несколькими позициями — это один расход с итоговой суммой к оплате (с НДС), кратко перечисли позиции в description.',
     '- amount — итоговая сумма в российских рублях, число больше нуля, с копейками.',
     `- date — дата документа в формате YYYY-MM-DD. Сегодня ${todayIso()}; если год не указан, выбери ближайшую прошедшую дату. Если даты нет вовсе — сегодняшняя.`,
     '- vendor — контрагент (поставщик, продавец). Если неизвестен — пустая строка.',
@@ -99,13 +127,26 @@ function buildPrompt(categories: CategoryRef[], text: string, source: Source): s
     '- confidence — high только если сумма, дата и контрагент прочитаны однозначно, без догадок; medium, если хоть что-то пришлось додумывать или выбирать из нескольких вариантов; low, если документ неразборчив или сумма сомнительна. Не ставь high по умолчанию.',
     '- Если расходов нет, верни пустой список items.',
     '',
+    'Позиции (lines) — каждая строка товаров или услуг документа:',
+    '- rawName — название строки как в документе.',
+    '- docQuantity и docUnit — количество и единица как в документе (например 10 и «меш»); если не указаны — 0 и пустая строка.',
+    '- lineTotal — сумма строки С НДС. Если в документе цены без НДС, а НДС указан итогом, добавь НДС к строке по её ставке (если ставка указана у строки), иначе пропорционально сумме строки; тогда confidence не выше medium.',
+    '- Сумма lineTotal по всем строкам должна совпадать с amount.',
+    '- notGoods — true для услуг, доставки, работ, аренды, возвратной тары: такие строки не привязываются к товарам.',
+    '- productId — id товара из справочника ниже, если это тот же товар (с учётом сокращений, сорта, фасовки и других названий); иначе пустая строка.',
+    '- baseQuantity — количество в базовой единице товара: для товара из справочника — в его единице; для нового — в suggestedUnit. Пример: 10 мешков по 50 кг для товара в кг → 500. Если пересчитать нельзя — 0.',
+    '- suggestedName и suggestedUnit — только для товара, которого нет в справочнике: короткое общее название без поставщика и фасовки (например «Мука пшеничная в/с») и единица из списка: кг, л, шт, м, уп. Иначе пустые строки.',
+    '',
     'Направления расходов:',
     ...categories.map((c) => `- id: ${c.id} — ${c.name}`),
+    '',
+    products.length ? 'Справочник товаров (id — название, единица; другие названия):' : 'Справочник товаров пуст — для всех товаров предлагай новые.',
+    ...products.map((p) => `- id: ${p.id} — ${p.name}, ${p.unit}${p.aliases.length ? `; ${p.aliases.join('; ')}` : ''}`),
     ...(text ? ['', source === 'xlsx' ? 'Содержимое Excel-счёта:' : 'Текст пользователя:', text] : []),
   ].join('\n');
 }
 
-function sanitizeItems(raw: unknown, categories: CategoryRef[]) {
+function sanitizeItems(raw: unknown, categories: CategoryRef[], productIds: Set<string>) {
   const ids = new Set(categories.map((c) => c.id));
   const fallback = categories.find((c) => c.name === 'Прочее')?.id ?? categories[categories.length - 1].id;
   const items = Array.isArray((raw as { items?: unknown })?.items) ? (raw as { items: unknown[] }).items : [];
@@ -119,7 +160,9 @@ function sanitizeItems(raw: unknown, categories: CategoryRef[]) {
       const vendor = str(o.vendor, 120);
       const raw = str(o.confidence, 10);
       const modelConfidence: Confidence = raw === 'high' || raw === 'medium' ? raw : 'low';
+      const lines = sanitizeLines(o.lines, productIds);
       return {
+        lines,
         vendor,
         date: dateValid ? date : todayIso(),
         amount,
@@ -129,8 +172,8 @@ function sanitizeItems(raw: unknown, categories: CategoryRef[]) {
         confidence: finalConfidence(modelConfidence, {
           vendorEmpty: !vendor,
           dateDefaulted: !dateValid,
-          linesMismatch: false,
-          unclearNewProduct: false,
+          linesMismatch: linesMismatch(lines, amount),
+          unclearNewProduct: lines.some((l) => !l.notGoods && !l.productId && (!l.suggestedUnit || l.baseQuantity === null)),
         }),
       };
     })
@@ -175,6 +218,7 @@ app.post('/api/expenses/extract', requireMember, upload.single('file'), async (r
     const file = req.file;
     let text = typeof req.body?.text === 'string' ? req.body.text.trim().slice(0, 20_000) : '';
     const categories = parseCategories(req.body?.categories);
+    const products = parseProducts(req.body?.products);
 
     if (!file && !text) throw new HttpError(400, 'empty', 'Загрузите файл или введите текст расхода.');
     const kind = file ? fileKind(file) : null;
@@ -202,7 +246,7 @@ app.post('/api/expenses/extract', requireMember, upload.single('file'), async (r
     const ai = new GoogleGenAI({ apiKey });
     const parts: Array<Record<string, unknown>> = [];
     if (file && kind === 'inline') parts.push({ inlineData: { mimeType: file.mimetype, data: file.buffer.toString('base64') } });
-    parts.push({ text: buildPrompt(categories, text, kind === 'inline' ? 'file' : kind === 'xlsx' ? 'xlsx' : 'text') });
+    parts.push({ text: buildPrompt(categories, products, text, kind === 'inline' ? 'file' : kind === 'xlsx' ? 'xlsx' : 'text') });
 
     const responseSchema = {
       type: Type.OBJECT,
@@ -212,7 +256,7 @@ app.post('/api/expenses/extract', requireMember, upload.single('file'), async (r
           type: Type.ARRAY,
           items: {
             type: Type.OBJECT,
-            required: ['vendor', 'date', 'amount', 'description', 'documentNumber', 'categoryId', 'confidence'],
+            required: ['vendor', 'date', 'amount', 'description', 'documentNumber', 'categoryId', 'confidence', 'lines'],
             properties: {
               vendor: { type: Type.STRING },
               date: { type: Type.STRING, description: 'YYYY-MM-DD' },
@@ -221,6 +265,24 @@ app.post('/api/expenses/extract', requireMember, upload.single('file'), async (r
               documentNumber: { type: Type.STRING },
               categoryId: { type: Type.STRING, enum: categories.map((c) => c.id) },
               confidence: { type: Type.STRING, enum: ['high', 'medium', 'low'] },
+              lines: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  required: ['rawName', 'docQuantity', 'docUnit', 'lineTotal', 'notGoods', 'productId', 'baseQuantity', 'suggestedName', 'suggestedUnit'],
+                  properties: {
+                    rawName: { type: Type.STRING },
+                    docQuantity: { type: Type.NUMBER },
+                    docUnit: { type: Type.STRING },
+                    lineTotal: { type: Type.NUMBER },
+                    notGoods: { type: Type.BOOLEAN },
+                    productId: { type: Type.STRING },
+                    baseQuantity: { type: Type.NUMBER },
+                    suggestedName: { type: Type.STRING },
+                    suggestedUnit: { type: Type.STRING },
+                  },
+                },
+              },
             },
           },
         },
@@ -279,7 +341,7 @@ app.post('/api/expenses/extract', requireMember, upload.single('file'), async (r
       throw new HttpError(502, 'bad_json', 'ИИ вернул ответ в неожиданном формате. Попробуйте ещё раз.');
     }
 
-    res.json({ items: sanitizeItems(parsed, categories) });
+    res.json({ items: sanitizeItems(parsed, categories, new Set(products.map((p) => p.id))) });
   } catch (err) {
     next(err);
   }
