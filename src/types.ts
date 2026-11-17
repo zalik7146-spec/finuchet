@@ -73,4 +73,7 @@ export interface DataStore {
   /** При переименовании обновляет и денормализованное название в расходах. */
   updateCategory(id: string, patch: { name?: string; color?: string; monthlyBudget?: number | null }): Promise<void>;
   deleteCategory(id: string): Promise<void>;
+  /** Ключи пар pairKey(a, b), отмеченных «Не дубль». */
+  subscribeDismissals(cb: (keys: Set<string>) => void, onError: (e: unknown) => void): () => void;
+  dismissDuplicate(a: string, b: string): Promise<void>;
 }

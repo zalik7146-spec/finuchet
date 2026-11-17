@@ -1,8 +1,17 @@
 import { useState } from 'react';
-import type { Category, Draft } from '../types';
+import type { Category, Draft, Expense } from '../types';
+import { findMatchesFor, isDuplicate, type DupFields } from '../lib/duplicates';
 import { emptyDraft, newKey } from '../lib/extract';
-import { CONFIDENCE_LABEL, SOURCE_LABEL, amountToInput, formatRub, isValidIsoDate, parseAmount } from '../lib/format';
+import { CONFIDENCE_LABEL, SOURCE_LABEL, amountToInput, formatDate, formatRub, isValidIsoDate, parseAmount } from '../lib/format';
+import { ExpenseView } from './ExpenseView';
 import { Label, Modal } from './ui';
+
+/** Поля черновика для поиска дублей; null, пока сумма или дата не заполнены. */
+function dupFields(d: Draft): DupFields | null {
+  const amount = parseAmount(d.amount);
+  if (!(amount > 0) || !isValidIsoDate(d.date)) return null;
+  return { vendor: d.vendor, amount, date: d.date, documentNumber: d.documentNumber };
+}
 
 type Errors = Partial<Record<'vendor' | 'date' | 'amount' | 'categoryId', string>>;
 
@@ -38,18 +47,22 @@ export function ReviewDialog({
   mode,
   initial,
   categories,
+  expenses,
   onSave,
   onClose,
 }: {
   mode: 'new' | 'edit';
   initial: Draft[];
   categories: Category[];
+  /** Сохранённые расходы — для предупреждения о дублях. */
+  expenses: Expense[];
   onSave: (drafts: Draft[]) => Promise<void>;
   onClose: () => void;
 }) {
   const [drafts, setDrafts] = useState<Draft[]>(initial);
   const [showErrors, setShowErrors] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [viewing, setViewing] = useState<Expense | null>(null);
 
   const patch = (key: string, p: Partial<Draft>) => setDrafts((ds) => ds.map((d) => (d.key === key ? { ...d, ...p } : d)));
   const remove = (key: string) => setDrafts((ds) => ds.filter((d) => d.key !== key));
@@ -126,6 +139,11 @@ export function ReviewDialog({
       {drafts.map((d, i) => {
         const err = showErrors ? errors[i] : {};
         const unsure = d.sourceType !== 'manual' && d.aiConfidence !== 'high';
+        const fields = dupFields(d);
+        const savedMatches = fields ? findMatchesFor(fields, expenses, d.id) : [];
+        const batchMatch = fields
+          ? drafts.findIndex((other, j) => j < i && (() => { const o = dupFields(other); return !!o && isDuplicate(fields, o); })())
+          : -1;
         const state = (bad?: string, warnable = false) => (bad ? 'bad' : warnable && unsure ? 'warn' : undefined);
         return (
           <section key={d.key} className="border-b border-line px-5 py-5 last:border-b-0">
@@ -167,6 +185,24 @@ export function ReviewDialog({
                 <textarea className="field" rows={2} maxLength={500} value={d.description} onChange={(e) => patch(d.key, { description: e.target.value })} />
               </Label>
             </div>
+            {savedMatches.map((m) => (
+              <div key={m.id} className="mt-3 flex flex-wrap items-baseline gap-x-3 text-[13px]" role="note">
+                <span className="font-semibold text-warn">Похоже, это уже есть:</span>
+                <span className="min-w-0 text-slate-700">
+                  {m.vendor} · <span className="num">{formatRub(m.amount)}</span> · <span className="num">{formatDate(m.date)}</span>
+                  {m.documentNumber && <> · № <span className="num">{m.documentNumber}</span></>}
+                </span>
+                <button className="link" onClick={() => setViewing(m)}>
+                  Открыть
+                </button>
+              </div>
+            ))}
+            {batchMatch >= 0 && (
+              <p className="mt-3 text-[13px]" role="note">
+                <span className="font-semibold text-warn">Совпадает с позицией {batchMatch + 1}</span>
+                <span className="text-slate-700"> в этом же документе — проверьте, не задвоилась ли она.</span>
+              </p>
+            )}
             <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] text-slate-500">
               <span className="min-w-0 truncate">
                 {SOURCE_LABEL[d.sourceType]}
@@ -204,6 +240,7 @@ export function ReviewDialog({
           </button>
         </div>
       )}
+      {viewing && <ExpenseView expense={viewing} onClose={() => setViewing(null)} />}
     </Modal>
   );
 }

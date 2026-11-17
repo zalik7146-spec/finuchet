@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 
 export function Modal({
   title,
@@ -7,6 +7,7 @@ export function Modal({
   children,
   footer,
   width = 'max-w-3xl',
+  top = false,
 }: {
   title: string;
   subtitle?: ReactNode;
@@ -14,15 +15,23 @@ export function Modal({
   children: ReactNode;
   footer?: ReactNode;
   width?: string;
+  /** Окно поверх другого окна (например, карточка расхода поверх черновика). */
+  top?: boolean;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // Escape закрывает только самое верхнее окно
+      const dialogs = document.querySelectorAll('[role="dialog"]');
+      if (dialogs[dialogs.length - 1]?.contains(ref.current)) onClose();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-6" role="dialog" aria-modal="true" aria-label={title}>
+    <div ref={ref} className={`fixed inset-0 ${top ? 'z-[45]' : 'z-40'} flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-6`} role="dialog" aria-modal="true" aria-label={title}>
       <div className={`flex max-h-[92vh] w-full ${width} flex-col rounded-t-xl border border-line bg-white sm:rounded-xl`}>
         <header className="flex items-start justify-between gap-4 border-b border-line px-5 py-4">
           <div className="min-w-0">

@@ -8,6 +8,8 @@ import { amountToInput, parseAmount } from './lib/format';
 import { Capture } from './components/Capture';
 import { Categories } from './components/Categories';
 import { Dashboard } from './components/Dashboard';
+import { Duplicates } from './components/Duplicates';
+import { findDuplicatePairs } from './lib/duplicates';
 import { FilterBar } from './components/FilterBar';
 import { Login } from './components/Login';
 import { Members } from './components/Members';
@@ -32,6 +34,7 @@ export default function App() {
   const [authReady, setAuthReady] = useState(!cloudEnabled);
   const [categories, setCategories] = useState<Category[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [dismissals, setDismissals] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [noAccess, setNoAccess] = useState(false);
   const [view, setView] = useState<View>('dashboard');
@@ -75,6 +78,7 @@ export default function App() {
     setLoading(true);
     setNoAccess(false);
     setCategories([]);
+    setDismissals(new Set());
     setExpenses([]);
     store
       .init()
@@ -90,6 +94,7 @@ export default function App() {
       .then((proceed) => {
         if (cancelled || !proceed) return;
         unsubs = [
+          store.subscribeDismissals(setDismissals, fail),
           store.subscribeCategories((c) => setCategories([...c].sort((a, b) => a.createdAt - b.createdAt || a.name.localeCompare(b.name, 'ru'))), fail),
           store.subscribeExpenses((e) => {
             setExpenses(e);
@@ -108,6 +113,7 @@ export default function App() {
 
   // Единый срез: от него работают KPI, графики, таблица и экспорт в Excel
   const filteredExpenses = useMemo(() => applyFilter(expenses, filter), [expenses, filter]);
+  const duplicatePairs = useMemo(() => findDuplicatePairs(expenses, dismissals), [expenses, dismissals]);
 
   const run = async (action: () => Promise<void>, okText?: string) => {
     try {
@@ -373,7 +379,16 @@ export default function App() {
                       <Registry {...registryProps} expenses={recentFirst(filteredExpenses)} limit={8} onShowAll={() => setView('registry')} />
                     </>
                   ) : (
-                    <Registry {...registryProps} expenses={filteredExpenses} />
+                    <>
+                      <Duplicates
+                        pairs={duplicatePairs}
+                        onDelete={setToDelete}
+                        onDismiss={(a, b) => {
+                          if (store) run(() => store.dismissDuplicate(a.id, b.id), 'Пара отмечена: не дубль.');
+                        }}
+                      />
+                      <Registry {...registryProps} expenses={filteredExpenses} />
+                    </>
                   )}
                 </>
               )}
@@ -384,7 +399,7 @@ export default function App() {
 
       {review?.state === 'loading' && <ReviewSkeleton source={review.source} onClose={closeReview} />}
       {review?.state === 'ready' && (
-        <ReviewDialog key={review.drafts[0]?.key ?? 'empty'} mode={review.mode} initial={review.drafts} categories={categories} onSave={saveDrafts} onClose={closeReview} />
+        <ReviewDialog key={review.drafts[0]?.key ?? 'empty'} mode={review.mode} initial={review.drafts} categories={categories} expenses={expenses} onSave={saveDrafts} onClose={closeReview} />
       )}
 
       {toDelete && (

@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { AppUser, Category, DataStore, Expense, ExpenseInput } from '../types';
 import { DEFAULT_CATEGORIES } from './defaults';
+import { pairKey } from './duplicates';
 
 /** Убирает пробелы, переносы строк и кавычки, которые легко захватить при вставке значения в панель хостинга. */
 const clean = (v: unknown) =>
@@ -198,48 +199,75 @@ const toExpenseRow = (e: Partial<ExpenseInput>) =>
 
 const PAGE = 1000;
 
+interface Feed<T> {
+  subscribe(cb: (items: T) => void, onError: (e: unknown) => void): () => void;
+  reload(): Promise<void>;
+}
+
 /** Хранилище Supabase: один общий реестр, доступ — участникам из таблицы members (политики RLS в supabase/schema.sql). */
 export function createCloudStore(uid: string): DataStore {
   if (!client) throw new Error('Облако не настроено.');
   const sb = client;
-  const catSubs = new Set<{ cb: (c: Category[]) => void; onError: (e: unknown) => void }>();
-  const expSubs = new Set<{ cb: (e: Expense[]) => void; onError: (e: unknown) => void }>();
   let channel: ReturnType<SupabaseClient['channel']> | null = null;
+  const feeds: Array<{ table: string; feed: Feed<unknown>; size: () => number }> = [];
 
-  const loadCategories = async () => {
-    const { data, error } = await sb.from('categories').select('*').order('created_at');
-    if (error) return catSubs.forEach((s) => s.onError(error));
-    const items = (data as CategoryRow[]).map(toCategory);
-    catSubs.forEach((s) => s.cb(items));
-  };
+  /** Загружает таблицу целиком (постранично) и раздаёт результат подписчикам; изменения с других устройств — через realtime. */
+  function tableFeed<R, T>(table: string, order: string[], map: (rows: R[]) => T): Feed<T> {
+    const subs = new Set<{ cb: (v: T) => void; onError: (e: unknown) => void }>();
+    const reload = async () => {
+      const rows: R[] = [];
+      for (let from = 0; ; from += PAGE) {
+        let q = sb.from(table).select('*');
+        for (const col of order) q = q.order(col);
+        const { data, error } = await q.range(from, from + PAGE - 1);
+        if (error) return subs.forEach((s) => s.onError(error));
+        rows.push(...(data as R[]));
+        if (data.length < PAGE) break;
+      }
+      const value = map(rows);
+      subs.forEach((s) => s.cb(value));
+    };
+    const feed: Feed<T> = {
+      reload,
+      subscribe(cb, onError) {
+        const sub = { cb, onError };
+        subs.add(sub);
+        ensureChannel();
+        void reload();
+        return () => {
+          subs.delete(sub);
+          releaseChannel();
+        };
+      },
+    };
+    feeds.push({ table, feed: feed as Feed<unknown>, size: () => subs.size });
+    return feed;
+  }
 
-  const loadExpenses = async () => {
-    const rows: ExpenseRow[] = [];
-    for (let from = 0; ; from += PAGE) {
-      const { data, error } = await sb.from('expenses').select('*').order('created_at').order('id').range(from, from + PAGE - 1);
-      if (error) return expSubs.forEach((s) => s.onError(error));
-      rows.push(...(data as ExpenseRow[]));
-      if (data.length < PAGE) break;
-    }
-    const items = rows.map(toExpense);
-    expSubs.forEach((s) => s.cb(items));
-  };
-
-  /** Изменения с других устройств приходят по каналу реального времени. */
   const ensureChannel = () => {
     if (channel) return;
-    channel = sb
-      .channel(`ledger-${uid}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, () => void loadCategories())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, () => void loadExpenses())
-      .subscribe();
+    let ch = sb.channel(`ledger-${uid}`);
+    for (const f of feeds) {
+      ch = ch.on('postgres_changes', { event: '*', schema: 'public', table: f.table }, () => void f.feed.reload());
+    }
+    channel = ch.subscribe();
   };
   const releaseChannel = () => {
-    if (channel && catSubs.size === 0 && expSubs.size === 0) {
+    if (channel && feeds.every((f) => f.size() === 0)) {
       void sb.removeChannel(channel);
       channel = null;
     }
   };
+
+  const categoriesFeed = tableFeed<CategoryRow, Category[]>('categories', ['created_at'], (rows) => rows.map(toCategory));
+  const expensesFeed = tableFeed<ExpenseRow, Expense[]>('expenses', ['created_at', 'id'], (rows) => rows.map(toExpense));
+  const dismissalsFeed = tableFeed<{ expense_a: string; expense_b: string }, Set<string>>(
+    'duplicate_dismissals',
+    ['expense_a', 'expense_b'],
+    (rows) => new Set(rows.map((r) => pairKey(r.expense_a, r.expense_b))),
+  );
+  const loadCategories = categoriesFeed.reload;
+  const loadExpenses = expensesFeed.reload;
 
   const check = <T extends { error: unknown }>(res: T): T => {
     if (res.error) throw res.error;
@@ -269,26 +297,9 @@ export function createCloudStore(uid: string): DataStore {
         ),
       );
     },
-    subscribeCategories(cb, onError) {
-      const sub = { cb, onError };
-      catSubs.add(sub);
-      ensureChannel();
-      void loadCategories();
-      return () => {
-        catSubs.delete(sub);
-        releaseChannel();
-      };
-    },
-    subscribeExpenses(cb, onError) {
-      const sub = { cb, onError };
-      expSubs.add(sub);
-      ensureChannel();
-      void loadExpenses();
-      return () => {
-        expSubs.delete(sub);
-        releaseChannel();
-      };
-    },
+    subscribeCategories: categoriesFeed.subscribe,
+    subscribeExpenses: expensesFeed.subscribe,
+    subscribeDismissals: dismissalsFeed.subscribe,
     async addExpenses(items) {
       check(await sb.from('expenses').insert(items.map(toExpenseRow)));
       await loadExpenses();
@@ -327,6 +338,11 @@ export function createCloudStore(uid: string): DataStore {
     async deleteCategory(id) {
       check(await sb.from('categories').delete().eq('id', id));
       await loadCategories();
+    },
+    async dismissDuplicate(a, b) {
+      const [expense_a, expense_b] = a < b ? [a, b] : [b, a];
+      check(await sb.from('duplicate_dismissals').upsert({ expense_a, expense_b }, { ignoreDuplicates: true }));
+      await dismissalsFeed.reload();
     },
   };
 }

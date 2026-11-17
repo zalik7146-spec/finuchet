@@ -114,3 +114,25 @@ grant select, insert, update, delete on public.categories, public.expenses to au
 
 -- синхронизация между устройствами
 alter publication supabase_realtime add table public.members, public.categories, public.expenses;
+
+-- Пары расходов, отмеченные «Не дубль»
+create table public.duplicate_dismissals (
+  expense_a uuid not null references public.expenses (id) on delete cascade,
+  expense_b uuid not null references public.expenses (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (expense_a, expense_b),
+  check (expense_a < expense_b)
+);
+create index duplicate_dismissals_b_idx on public.duplicate_dismissals (expense_b);
+
+alter table public.duplicate_dismissals enable row level security;
+create policy "duplicate_dismissals: участники читают" on public.duplicate_dismissals
+  for select to authenticated using ((select private.is_member()));
+create policy "duplicate_dismissals: участники создают" on public.duplicate_dismissals
+  for insert to authenticated with check ((select private.is_member()));
+create policy "duplicate_dismissals: участники удаляют" on public.duplicate_dismissals
+  for delete to authenticated using ((select private.is_member()));
+
+revoke all on public.duplicate_dismissals from anon;
+grant select, insert, delete on public.duplicate_dismissals to authenticated;
+alter publication supabase_realtime add table public.duplicate_dismissals;

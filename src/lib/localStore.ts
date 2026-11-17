@@ -1,31 +1,63 @@
 import type { Category, DataStore, Expense } from '../types';
 import { DEFAULT_CATEGORIES } from './defaults';
+import { pairKey } from './duplicates';
 
 const KEY = 'finuchet-demo-v1';
 
 interface State {
   categories: Category[];
   expenses: Expense[];
+  dismissals: string[];
   seeded: boolean;
+}
+
+/** Дополняет сохранённое состояние полями, появившимися в новых версиях. */
+function normalize(raw: Partial<State>): State {
+  return {
+    categories: raw.categories ?? [],
+    expenses: raw.expenses ?? [],
+    dismissals: raw.dismissals ?? [],
+    seeded: raw.seeded ?? false,
+  };
 }
 
 function load(): State {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) return JSON.parse(raw) as State;
+    if (raw) return normalize(JSON.parse(raw) as Partial<State>);
   } catch {
     // повреждённые данные — начинаем заново
   }
-  return { categories: [], expenses: [], seeded: false };
+  return normalize({});
 }
 
 const uid = () => crypto.randomUUID();
 
+/** Подписчики одного среза состояния. */
+function channel<T>(read: (s: State) => T) {
+  const subs = new Set<(v: T) => void>();
+  return {
+    add(cb: (v: T) => void, s: State) {
+      subs.add(cb);
+      cb(read(s));
+      return () => {
+        subs.delete(cb);
+      };
+    },
+    emit(s: State) {
+      const v = read(s);
+      subs.forEach((cb) => cb(v));
+    },
+  };
+}
+
 /** Хранилище демо-режима: данные живут только в этом браузере. */
 export function createLocalStore(): DataStore {
   let state = load();
-  const catSubs = new Set<(c: Category[]) => void>();
-  const expSubs = new Set<(e: Expense[]) => void>();
+  const categories = channel((s) => s.categories);
+  const expenses = channel((s) => s.expenses);
+  const dismissals = channel((s) => new Set(s.dismissals));
+  const all = [categories, expenses, dismissals];
 
   const commit = (next: State) => {
     state = next;
@@ -34,8 +66,7 @@ export function createLocalStore(): DataStore {
     } catch {
       throw new Error('Не удалось сохранить данные в браузере: хранилище переполнено или недоступно.');
     }
-    catSubs.forEach((cb) => cb(state.categories));
-    expSubs.forEach((cb) => cb(state.expenses));
+    all.forEach((c) => c.emit(state));
   };
 
   return {
@@ -53,21 +84,14 @@ export function createLocalStore(): DataStore {
         })),
       });
     },
-    subscribeCategories(cb) {
-      catSubs.add(cb);
-      cb(state.categories);
-      return () => catSubs.delete(cb);
-    },
-    subscribeExpenses(cb) {
-      expSubs.add(cb);
-      cb(state.expenses);
-      return () => expSubs.delete(cb);
-    },
+    subscribeCategories: (cb) => categories.add(cb, state),
+    subscribeExpenses: (cb) => expenses.add(cb, state),
+    subscribeDismissals: (cb) => dismissals.add(cb, state),
     async addExpenses(items) {
       const now = Date.now();
       commit({
         ...state,
-        expenses: [...state.expenses, ...items.map((it) => ({ ...it, id: uid(), createdAt: now, updatedAt: now }))],
+        expenses: [...state.expenses, ...items.map((it, i) => ({ ...it, id: uid(), createdAt: now + i, updatedAt: now + i }))],
       });
     },
     async updateExpense(id, patch) {
@@ -77,7 +101,11 @@ export function createLocalStore(): DataStore {
       });
     },
     async deleteExpense(id) {
-      commit({ ...state, expenses: state.expenses.filter((e) => e.id !== id) });
+      commit({
+        ...state,
+        expenses: state.expenses.filter((e) => e.id !== id),
+        dismissals: state.dismissals.filter((k) => !k.split('|').includes(id)),
+      });
     },
     async addCategory(data) {
       commit({
@@ -97,6 +125,10 @@ export function createLocalStore(): DataStore {
     },
     async deleteCategory(id) {
       commit({ ...state, categories: state.categories.filter((c) => c.id !== id) });
+    },
+    async dismissDuplicate(a, b) {
+      const key = pairKey(a, b);
+      if (!state.dismissals.includes(key)) commit({ ...state, dismissals: [...state.dismissals, key] });
     },
   };
 }
