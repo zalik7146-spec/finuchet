@@ -4,7 +4,7 @@ import { validateLine } from '../lib/draftLines';
 import { LinesEditor } from './LinesEditor';
 import { findMatchesFor, isDuplicate, type DupFields } from '../lib/duplicates';
 import { emptyDraft, newKey } from '../lib/extract';
-import { CONFIDENCE_LABEL, SOURCE_LABEL, amountToInput, formatDate, formatRub, isValidIsoDate, parseAmount } from '../lib/format';
+import { CONFIDENCE_LABEL, SOURCE_LABEL, amountToInput, displayFileName, formatDate, formatRub, isValidIsoDate, parseAmount } from '../lib/format';
 import { ExpenseView } from './ExpenseView';
 import { Label, Modal } from './ui';
 
@@ -51,6 +51,7 @@ export function ReviewDialog({
   categories,
   products,
   renderLineHint,
+  countPriceRises,
   expenses,
   onToggleReceived,
   onSave,
@@ -62,6 +63,8 @@ export function ReviewDialog({
   products: Product[];
   /** Подсказка под позицией (сравнение цен). */
   renderLineHint?: (draft: Draft, line: DraftLine, product: Product | null) => ReactNode;
+  /** Сколько позиций дороже прошлой закупки — для сводки над таблицей. */
+  countPriceRises?: (draft: Draft, lines: DraftLine[]) => number;
   /** Сохранённые расходы — для предупреждения о дублях. */
   expenses: Expense[];
   /** Отметка «Получено» у сохранённого расхода (режим редактирования). */
@@ -128,6 +131,7 @@ export function ReviewDialog({
       title={title}
       subtitle={subtitle}
       onClose={onClose}
+      width="max-w-[1280px]"
       footer={
         <>
           <span className="mr-auto text-sm text-slate-500">
@@ -161,12 +165,66 @@ export function ReviewDialog({
         const state = (bad?: string, warnable = false) => (bad ? 'bad' : warnable && unsure ? 'warn' : undefined);
         return (
           <section key={d.key} className="border-b border-line px-5 py-5 last:border-b-0">
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-6">
-              <Label text="Контрагент" className="col-span-2 sm:col-span-3">
+            <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[13px] text-slate-500">
+              {drafts.length > 1 && <span className="font-semibold text-ink">Расход {i + 1} из {drafts.length}</span>}
+              <span className="min-w-0 truncate">
+                {SOURCE_LABEL[d.sourceType]}
+                {displayFileName(d.sourceFileName) && ` · ${displayFileName(d.sourceFileName)}`}
+                {d.sourceType !== 'manual' && (
+                  <>
+                    {' · уверенность ИИ: '}
+                    <span className={d.aiConfidence === 'high' ? 'font-semibold text-ok' : d.aiConfidence === 'medium' ? 'font-semibold text-warn' : 'font-semibold text-bad'}>
+                      {CONFIDENCE_LABEL[d.aiConfidence]}
+                    </span>
+                  </>
+                )}
+              </span>
+              {mode === 'new' && (
+                <span className="ml-auto flex gap-4">
+                  <button className="link" onClick={() => split(d)}>
+                    Разбить
+                  </button>
+                  <button className="link link-danger" onClick={() => remove(d.key)}>
+                    Удалить расход
+                  </button>
+                </span>
+              )}
+            </div>
+
+            {(savedMatches.length > 0 || batchMatch >= 0) && (
+              <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[13px]" role="note">
+                {savedMatches.map((m) => (
+                  <div key={m.id} className="flex flex-wrap items-baseline gap-x-3">
+                    <span className="font-semibold text-warn">Похоже, это уже есть:</span>
+                    <span className="min-w-0 text-slate-700">
+                      {m.vendor} · <span className="num">{formatRub(m.amount)}</span> · <span className="num">{formatDate(m.date)}</span>
+                      {m.documentNumber && (
+                        <>
+                          {' '}
+                          · № <span className="num">{m.documentNumber}</span>
+                        </>
+                      )}
+                    </span>
+                    <button className="link" onClick={() => setViewing(m)}>
+                      Открыть и сравнить
+                    </button>
+                  </div>
+                ))}
+                {batchMatch >= 0 && (
+                  <div>
+                    <span className="font-semibold text-warn">Совпадает с расходом {batchMatch + 1}</span>
+                    <span className="text-slate-700"> в этом же документе — проверьте, не задвоился ли он.</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3 lg:grid-cols-12">
+              <Label text="Контрагент" className="col-span-2 lg:col-span-4">
                 <input className="field" data-state={state(err.vendor)} value={d.vendor} maxLength={120} onChange={(e) => patch(d.key, { vendor: e.target.value })} />
                 {err.vendor && <span className="mt-1 block text-xs text-bad">{err.vendor}</span>}
               </Label>
-              <Label text="Направление" className="col-span-2 sm:col-span-3">
+              <Label text="Направление" className="col-span-2 lg:col-span-3">
                 <select className="field" data-state={state(err.categoryId)} value={d.categoryId} onChange={(e) => patch(d.key, { categoryId: e.target.value })}>
                   {!categories.some((c) => c.id === d.categoryId) && <option value="">— выберите —</option>}
                   {categories.map((c) => (
@@ -177,13 +235,16 @@ export function ReviewDialog({
                 </select>
                 {err.categoryId && <span className="mt-1 block text-xs text-bad">{err.categoryId}</span>}
               </Label>
-              <Label text="Дата" className="sm:col-span-2">
+              <Label text="Дата" className="lg:col-span-2">
                 <input type="date" className="field num" data-state={state(err.date, true)} value={d.date} onChange={(e) => patch(d.key, { date: e.target.value })} />
                 {err.date && <span className="mt-1 block text-xs text-bad">{err.date}</span>}
               </Label>
-              <Label text="Сумма, ₽" className="sm:col-span-2">
+              <Label text="№ документа" className="lg:col-span-1">
+                <input className="field num" value={d.documentNumber} maxLength={60} onChange={(e) => patch(d.key, { documentNumber: e.target.value })} />
+              </Label>
+              <Label text="Сумма, ₽" className="col-span-2 lg:col-span-2">
                 <input
-                  className="field num text-right"
+                  className="field num text-right font-semibold"
                   inputMode="decimal"
                   placeholder="0,00"
                   data-state={state(err.amount, true)}
@@ -192,13 +253,11 @@ export function ReviewDialog({
                 />
                 {err.amount && <span className="mt-1 block text-xs text-bad">{err.amount}</span>}
               </Label>
-              <Label text="№ документа" className="col-span-2 sm:col-span-2">
-                <input className="field num" value={d.documentNumber} maxLength={60} onChange={(e) => patch(d.key, { documentNumber: e.target.value })} />
-              </Label>
-              <Label text="Назначение / позиции" className="col-span-2 sm:col-span-6">
-                <textarea className="field" rows={2} maxLength={500} value={d.description} onChange={(e) => patch(d.key, { description: e.target.value })} />
+              <Label text="Назначение" className="col-span-2 lg:col-span-12">
+                <input className="field" maxLength={500} value={d.description} onChange={(e) => patch(d.key, { description: e.target.value })} />
               </Label>
             </div>
+
             <LinesEditor
               lines={d.lines}
               products={products}
@@ -206,8 +265,10 @@ export function ReviewDialog({
               showErrors={showErrors}
               onChange={(lines) => setLines(d, lines)}
               renderHint={renderLineHint ? (line, product) => renderLineHint(d, line, product) : undefined}
+              countPriceRises={countPriceRises ? (lines) => countPriceRises(d, lines) : undefined}
             />
-            <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+
+            <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
               <label className="flex cursor-pointer items-center gap-2">
                 <input type="checkbox" className="h-4 w-4 accent-[#2563EB]" checked={d.isPurchase} onChange={(e) => patch(d.key, { isPurchase: e.target.checked, purchaseTouched: true })} />
                 Покупка товара
@@ -234,50 +295,6 @@ export function ReviewDialog({
                 );
               })()}
             </div>
-            {savedMatches.map((m) => (
-              <div key={m.id} className="mt-3 flex flex-wrap items-baseline gap-x-3 text-[13px]" role="note">
-                <span className="font-semibold text-warn">Похоже, это уже есть:</span>
-                <span className="min-w-0 text-slate-700">
-                  {m.vendor} · <span className="num">{formatRub(m.amount)}</span> · <span className="num">{formatDate(m.date)}</span>
-                  {m.documentNumber && <> · № <span className="num">{m.documentNumber}</span></>}
-                </span>
-                <button className="link" onClick={() => setViewing(m)}>
-                  Открыть
-                </button>
-              </div>
-            ))}
-            {batchMatch >= 0 && (
-              <p className="mt-3 text-[13px]" role="note">
-                <span className="font-semibold text-warn">Совпадает с позицией {batchMatch + 1}</span>
-                <span className="text-slate-700"> в этом же документе — проверьте, не задвоилась ли она.</span>
-              </p>
-            )}
-            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] text-slate-500">
-              <span className="min-w-0 truncate">
-                {SOURCE_LABEL[d.sourceType]}
-                {d.sourceFileName && ` · ${d.sourceFileName}`}
-                {d.sourceType !== 'manual' && (
-                  <>
-                    {' · уверенность ИИ: '}
-                    <span className={d.aiConfidence === 'high' ? 'font-semibold text-ok' : d.aiConfidence === 'medium' ? 'font-semibold text-warn' : 'font-semibold text-bad'}>
-                      {CONFIDENCE_LABEL[d.aiConfidence]}
-                    </span>
-                  </>
-                )}
-              </span>
-              <span className="ml-auto flex gap-4">
-                {mode === 'new' && (
-                  <>
-                    <button className="link" onClick={() => split(d)}>
-                      Разбить
-                    </button>
-                    <button className="link link-danger" onClick={() => remove(d.key)}>
-                      Удалить строку
-                    </button>
-                  </>
-                )}
-              </span>
-            </div>
           </section>
         );
       })}
@@ -285,7 +302,7 @@ export function ReviewDialog({
       {mode === 'new' && (
         <div className="border-t border-line px-5 py-3">
           <button className="link" onClick={add} disabled={!categories.length}>
-            + Добавить позицию вручную
+            + Добавить расход вручную
           </button>
         </div>
       )}

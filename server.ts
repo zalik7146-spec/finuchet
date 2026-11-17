@@ -6,6 +6,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { finalConfidence, type Confidence } from './server/confidence';
 import { xlsxToText } from './server/xlsx';
 import { linesMismatch, sanitizeLines } from './server/lines';
+import { shortenVendor } from './server/vendor';
 
 try {
   process.loadEnvFile();
@@ -163,7 +164,7 @@ function sanitizeItems(raw: unknown, categories: CategoryRef[], productIds: Set<
       const lines = sanitizeLines(o.lines, productIds);
       return {
         lines,
-        vendor,
+        vendor: shortenVendor(vendor),
         date: dateValid ? date : todayIso(),
         amount,
         description: str(o.description, 500),

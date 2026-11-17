@@ -52,3 +52,9 @@ export const formatBucket = (key: string) => {
   const p = key.split('-');
   return p.length === 2 ? `${MONTHS[Number(p[1]) - 1]} ${p[0]}` : `${p[2]}.${p[1]}`;
 };
+
+/** Имя файла для показа: служебные имена (uuid, хэши от мессенджеров) не несут смысла — скрываем. */
+export const displayFileName = (name: string) => {
+  const base = name.replace(/\.[^.]+$/, '');
+  return /^[0-9a-f-]{16,}$/i.test(base) ? '' : name;
+};

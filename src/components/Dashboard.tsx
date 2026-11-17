@@ -7,18 +7,37 @@ import { formatBucket, formatRub, formatRubShort } from '../lib/format';
 
 const pctText = (n: number) => `${n > 0 ? '+' : ''}${n.toLocaleString('ru-RU', { maximumFractionDigits: 1 })}%`;
 
-function Kpi({ label, value, hint, mono = true, onClick }: { label: string; value: string; hint?: ReactNode; mono?: boolean; onClick?: () => void }) {
+function Kpi({
+  label,
+  value,
+  hint,
+  note,
+  mono = true,
+  onClick,
+}: {
+  label: string;
+  value: string;
+  hint?: ReactNode;
+  /** Вторая строка под числом — например, сравнение с прошлым периодом. */
+  note?: ReactNode;
+  mono?: boolean;
+  onClick?: () => void;
+}) {
   const body = (
     <>
-      <div className="text-xs font-semibold text-slate-500">{label}</div>
-      <div className={`mt-1.5 truncate text-xl font-semibold ${mono ? 'num' : ''}`} title={value}>
+      <div className="flex items-baseline justify-between gap-2 text-[13px] font-medium text-slate-500">
+        {label}
+        {onClick && <span className="text-xs text-slate-400 group-hover:text-accent">открыть →</span>}
+      </div>
+      <div className={`mt-1 truncate text-[22px] leading-8 font-semibold tracking-tight ${mono ? 'num' : ''}`} title={value}>
         {value}
       </div>
-      {hint && <div className="num mt-0.5 truncate text-xs text-slate-500">{hint}</div>}
+      {hint && <div className="truncate text-[13px] text-slate-500">{hint}</div>}
+      {note && <div className="mt-0.5 truncate text-[13px] text-slate-500">{note}</div>}
     </>
   );
   return onClick ? (
-    <button className="card px-4 py-3.5 text-left hover:border-slate-300 focus-visible:outline-2 focus-visible:outline-accent" onClick={onClick}>
+    <button className="card group px-4 py-3.5 text-left hover:border-slate-300 focus-visible:outline-2 focus-visible:outline-accent" onClick={onClick}>
       {body}
     </button>
   ) : (
@@ -89,13 +108,18 @@ export function Dashboard({
         <Kpi
           label="Расходы за период"
           value={formatRub(total)}
-          hint={
-            <>
-              {count} заяв.
-              {previousTotal !== null && (
-                <> · к прошлому периоду: {delta === null ? 'не было расходов' : pctText(delta)}</>
-              )}
-            </>
+          hint={`${count} ${count % 10 === 1 && count % 100 !== 11 ? 'заявка' : [2, 3, 4].includes(count % 10) && ![12, 13, 14].includes(count % 100) ? 'заявки' : 'заявок'}`}
+          note={
+            previousTotal === null ? undefined : delta === null ? (
+              'в прошлом периоде расходов не было'
+            ) : (
+              <>
+                <span className="num font-semibold text-ink">
+                  {delta > 0 ? '▲' : delta < 0 ? '▼' : '='} {pctText(delta).replace(/^[+-]/, '')}
+                </span>{' '}
+                к тому же сроку прошлого периода
+              </>
+            )
           }
         />
         <Kpi label="Закупки в пути" value={formatRub(awaiting.total)} hint={`${awaiting.count} ожидают получения`} onClick={onOpenAwaiting} />

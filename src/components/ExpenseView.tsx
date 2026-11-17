@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { Expense } from '../types';
-import { CONFIDENCE_LABEL, SOURCE_LABEL, formatDate, formatRub } from '../lib/format';
+import { CONFIDENCE_LABEL, SOURCE_LABEL, displayFileName, formatDate, formatRub } from '../lib/format';
 import { Modal } from './ui';
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
@@ -28,7 +28,7 @@ export function ExpenseView({ expense: e, onClose, extra }: { expense: Expense; 
         <Row label="Назначение">{e.description || '—'}</Row>
         <Row label="Источник">
           {SOURCE_LABEL[e.sourceType]}
-          {e.sourceFileName && ` · ${e.sourceFileName}`}
+          {displayFileName(e.sourceFileName) && ` · ${displayFileName(e.sourceFileName)}`}
           {e.sourceType !== 'manual' && ` · уверенность ИИ: ${CONFIDENCE_LABEL[e.aiConfidence]}`}
         </Row>
       </dl>

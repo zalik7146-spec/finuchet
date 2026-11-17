@@ -151,12 +151,18 @@ export default function App() {
   const viewing = viewingId ? expenses.find((e) => e.id === viewingId) : undefined;
 
   /** «В прошлый раз дешевле»: сравнение строки черновика с прошлыми закупками того же товара. */
-  const renderLineHint = (draft: Draft, line: DraftLine, product: Product | null) => {
+  const lineInsight = (draft: Draft, line: DraftLine) => {
+    const product = line.productId ? products.find((p) => p.id === line.productId) : undefined;
     if (!product || line.notGoods || !isValidIsoDate(draft.date)) return null;
     const price = lineUnitPrice(line);
-    if (price === null) return null;
-    return <PriceHint insight={priceInsight(product.id, price, draft.date, points, draft.id)} unit={product.unit} onOpen={setViewingId} />;
+    return price === null ? null : { product, insight: priceInsight(product.id, price, draft.date, points, draft.id) };
   };
+  const renderLineHint = (draft: Draft, line: DraftLine) => {
+    const r = lineInsight(draft, line);
+    return r ? <PriceHint insight={r.insight} unit={r.product.unit} onOpen={setViewingId} /> : null;
+  };
+  const countPriceRises = (draft: Draft, list: DraftLine[]) =>
+    list.filter((l) => (lineInsight(draft, l)?.insight.deltaPct ?? 0) > 1).length;
 
   const run = async (action: () => Promise<void>, okText?: string) => {
     try {
@@ -520,7 +526,7 @@ export default function App() {
 
       {review?.state === 'loading' && <ReviewSkeleton source={review.source} onClose={closeReview} />}
       {review?.state === 'ready' && (
-        <ReviewDialog key={review.drafts[0]?.key ?? 'empty'} mode={review.mode} initial={review.drafts} categories={categories} products={products} renderLineHint={renderLineHint} expenses={expenses} onToggleReceived={toggleReceived} onSave={saveDrafts} onClose={closeReview} />
+        <ReviewDialog key={review.drafts[0]?.key ?? 'empty'} mode={review.mode} initial={review.drafts} categories={categories} products={products} renderLineHint={renderLineHint} countPriceRises={countPriceRises} expenses={expenses} onToggleReceived={toggleReceived} onSave={saveDrafts} onClose={closeReview} />
       )}
 
       {toDelete && (

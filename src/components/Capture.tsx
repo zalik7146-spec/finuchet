@@ -1,7 +1,7 @@
 import { useRef, useState, type DragEvent } from 'react';
 import { validateFile } from '../lib/extract';
 
-/** Зона быстрой загрузки документа и поле текстового ввода. */
+/** Компактная полоса добавления расхода: файл (кнопкой или перетаскиванием на всю полосу), заметка, ручной ввод. */
 export function Capture({
   busy,
   onFile,
@@ -40,60 +40,58 @@ export function Capture({
   };
 
   return (
-    <section className="card grid gap-0 md:grid-cols-2" aria-label="Добавление расхода">
-      <div
-        className={`flex flex-col items-start justify-center gap-2 rounded-l-lg border-b border-line p-5 md:border-r md:border-b-0 ${over ? 'bg-blue-50' : ''}`}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setOver(true);
+    <section
+      className={`card relative flex flex-col gap-3 p-3 transition-colors sm:flex-row sm:items-center ${over ? 'border-accent bg-blue-50' : ''}`}
+      aria-label="Добавление расхода"
+      onDragOver={(e) => {
+        e.preventDefault();
+        setOver(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) setOver(false);
+      }}
+      onDrop={onDrop}
+    >
+      <button className="btn btn-primary shrink-0" disabled={busy} onClick={() => input.current?.click()}>
+        Загрузить счёт или чек
+      </button>
+      <input
+        ref={input}
+        type="file"
+        className="hidden"
+        accept="application/pdf,image/jpeg,image/png,image/webp,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        onChange={(e) => {
+          take(e.target.files?.[0]);
+          e.target.value = '';
         }}
-        onDragLeave={() => setOver(false)}
-        onDrop={onDrop}
-      >
-        <h2 className="text-sm font-bold">Документ</h2>
-        <p className="text-[13px] text-slate-500">Перетащите сюда счёт или чек · PDF, JPG, PNG, WEBP, XLSX · до 15 МБ</p>
-        <div className="mt-1 flex flex-wrap items-center gap-3">
-          <button className="btn" disabled={busy} onClick={() => input.current?.click()}>
-            Выбрать файл
-          </button>
-          <button className="link" disabled={busy} onClick={onManual}>
-            Добавить вручную
-          </button>
-        </div>
-        <input
-          ref={input}
-          type="file"
-          className="hidden"
-          accept="application/pdf,image/jpeg,image/png,image/webp,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          onChange={(e) => {
-            take(e.target.files?.[0]);
-            e.target.value = '';
-          }}
-        />
-      </div>
-      <div className="flex flex-col gap-2 p-5">
-        <label htmlFor="quick-text" className="text-sm font-bold">
-          Текстовая заметка
+      />
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        <label htmlFor="quick-text" className="sr-only">
+          Текстовая заметка о расходе
         </label>
-        <textarea
+        <input
           id="quick-text"
-          className="field"
-          rows={2}
+          className="field min-w-0 flex-1"
           maxLength={20000}
-          placeholder="Оплата Яндекс Доставки 4 500 ₽ по накладной №128 от 14.11"
+          placeholder="…или опишите расход: «Оплата Яндекс Доставки 4 500 ₽ по накладной №128 от 14.11»"
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submitText();
+            if (e.key === 'Enter') submitText();
           }}
         />
-        <div className="flex items-center gap-3">
-          <button className="btn" disabled={busy || !text.trim()} onClick={submitText}>
-            Распознать
-          </button>
-          <span className="text-xs text-slate-400">Ctrl + Enter</span>
-        </div>
+        <button className="btn shrink-0" disabled={busy || !text.trim()} onClick={submitText}>
+          Распознать
+        </button>
       </div>
+      <button className="link shrink-0 self-start sm:self-center" disabled={busy} onClick={onManual}>
+        Вручную
+      </button>
+      {over && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg border-2 border-dashed border-accent bg-blue-50/90 text-sm font-semibold text-accent">
+          Отпустите файл — PDF, JPG, PNG, WEBP или XLSX до 15 МБ
+        </div>
+      )}
     </section>
   );
 }

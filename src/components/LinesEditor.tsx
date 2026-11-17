@@ -1,10 +1,18 @@
-import { useId, type ReactNode } from 'react';
+import { Fragment, useId, type ReactNode } from 'react';
 import { BASE_UNITS, type BaseUnit, type DraftLine, type Product } from '../types';
 import { emptyLine } from '../lib/extract';
 import { lineUnitPrice, lineWarning, validateLine } from '../lib/draftLines';
 import { formatRub, parseAmount } from '../lib/format';
 
 const key = (s: string) => s.trim().toLowerCase();
+
+const plural = (n: number, one: string, few: string, many: string) => {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+  return many;
+};
 
 /** Таблица позиций документа на экране проверки: привязка к справочнику, количество, сумма, цена за единицу. */
 export function LinesEditor({
@@ -14,6 +22,7 @@ export function LinesEditor({
   showErrors,
   onChange,
   renderHint,
+  countPriceRises,
 }: {
   lines: DraftLine[];
   products: Product[];
@@ -21,8 +30,10 @@ export function LinesEditor({
   amount: number;
   showErrors: boolean;
   onChange: (lines: DraftLine[]) => void;
-  /** Подсказка под строкой (сравнение цен, задача 7). */
+  /** Подсказка под строкой (сравнение цен). */
   renderHint?: (line: DraftLine, product: Product | null) => ReactNode;
+  /** Сколько позиций дороже прошлой закупки. */
+  countPriceRises?: (lines: DraftLine[]) => number;
 }) {
   const listId = useId();
   const byId = new Map(products.map((p) => [p.id, p]));
@@ -39,85 +50,171 @@ export function LinesEditor({
   };
 
   const sum = lines.reduce((s, l) => s + (parseAmount(l.lineTotal) || 0), 0);
-  const mismatch = lines.length > 0 && amount > 0 && Math.abs(sum - amount) > 1;
+  const diff = Math.abs(sum - amount);
+  const newCount = lines.filter((l) => !l.notGoods && !l.productId && l.newProduct?.name.trim()).length;
+  const needAttention = lines.filter((l) => lineWarning(l)).length;
+  const rises = countPriceRises?.(lines) ?? 0;
 
   return (
-    <div className="mt-4">
-      <div className="mb-1.5 flex items-baseline justify-between gap-3">
-        <span className="text-xs font-semibold text-slate-500">Позиции документа</span>
-        {lines.length > 0 && (
-          <span className="num text-xs text-slate-500">
-            Σ {formatRub(sum)}
+    <div className="mt-5">
+      <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[13px]">
+        <span className="font-semibold text-ink">Позиции</span>
+        {lines.length > 0 ? (
+          <span className="text-slate-500">
+            {lines.length} {plural(lines.length, 'позиция', 'позиции', 'позиций')}
+            {newCount > 0 && (
+              <>
+                {' · '}
+                <span className="text-accent">
+                  {newCount} {plural(newCount, 'новый товар', 'новых товара', 'новых товаров')}
+                </span>
+              </>
+            )}
+            {rises > 0 && (
+              <>
+                {' · '}
+                <span className="font-semibold text-warn">
+                  {rises} дороже прошлой закупки
+                </span>
+              </>
+            )}
+            {needAttention > 0 && (
+              <>
+                {' · '}
+                <span className="text-warn">{needAttention} без товара или количества</span>
+              </>
+            )}
+            {' · '}
+            {amount > 0 && diff > 1 ? (
+              <span className="font-semibold text-warn">
+                не сходится с итогом на <span className="num">{formatRub(diff)}</span>
+              </span>
+            ) : (
+              <span className="text-ok">сходится с итогом</span>
+            )}
           </span>
+        ) : (
+          <span className="text-slate-400">нет — расход сохранится без позиций</span>
         )}
       </div>
 
       {lines.length > 0 && (
         <div className="overflow-x-auto rounded-md border border-line">
-          <table className="w-full min-w-[720px] text-sm">
+          <table className="w-full min-w-[860px] table-fixed text-sm">
+            <colgroup>
+              <col />
+              <col className="w-[30%]" />
+              <col className="w-36" />
+              <col className="w-36" />
+              <col className="w-32" />
+              <col className="w-10" />
+            </colgroup>
             <thead>
               <tr className="border-b border-line bg-slate-50 text-left text-xs text-slate-500">
-                <th className="px-2.5 py-1.5 font-semibold">Позиция в документе</th>
-                <th className="w-[30%] px-2.5 py-1.5 font-semibold">Товар</th>
-                <th className="w-32 px-2.5 py-1.5 font-semibold">Кол-во</th>
-                <th className="w-32 px-2.5 py-1.5 text-right font-semibold">Сумма с НДС</th>
-                <th className="w-28 px-2.5 py-1.5 text-right font-semibold">Цена/ед.</th>
-                <th className="w-8" />
+                <th className="px-3 py-1.5 font-semibold">Позиция в документе</th>
+                <th className="px-3 py-1.5 font-semibold">Товар из справочника</th>
+                <th className="px-3 py-1.5 text-right font-semibold">Кол-во</th>
+                <th className="px-3 py-1.5 text-right font-semibold">Сумма с НДС</th>
+                <th className="px-3 py-1.5 text-right font-semibold">Цена/ед.</th>
+                <th />
               </tr>
             </thead>
-            <tbody>
-              {lines.map((l) => {
-                const product = l.productId ? (byId.get(l.productId) ?? null) : null;
-                const unit: BaseUnit | null = product?.unit ?? l.newProduct?.unit ?? null;
-                const price = l.notGoods ? null : lineUnitPrice(l);
-                const error = showErrors ? validateLine(l) : null;
-                const warning = lineWarning(l);
-                const hint = renderHint?.(l, product);
-                return (
-                  <tr key={l.key} className="border-b border-line align-top last:border-b-0">
-                    <td className="px-2.5 py-2">
+            {lines.map((l) => {
+              const product = l.productId ? (byId.get(l.productId) ?? null) : null;
+              const unit: BaseUnit | null = product?.unit ?? l.newProduct?.unit ?? null;
+              const price = l.notGoods ? null : lineUnitPrice(l);
+              const error = showErrors ? validateLine(l) : null;
+              const warning = lineWarning(l);
+              const hint = renderHint?.(l, product);
+              const docInfo = l.docQuantity || l.docUnit ? `в документе: ${l.docQuantity} ${l.docUnit}`.trim() : '';
+              return (
+                <tbody key={l.key} className="border-b border-line last:border-b-0 hover:bg-slate-50/50">
+                  <tr>
+                    <td className="px-3 pt-2">
                       <input
                         className="field !h-8"
                         value={l.rawName}
                         maxLength={300}
+                        title={l.rawName}
                         aria-label="Позиция в документе"
+                        data-state={error ? 'bad' : undefined}
                         onChange={(e) => patch(l.key, { rawName: e.target.value })}
                       />
-                      {(l.docQuantity || l.docUnit) && (
-                        <div className="num mt-1 text-xs text-slate-400">
-                          в документе: {l.docQuantity} {l.docUnit}
+                    </td>
+                    <td className="px-3 pt-2">
+                      {l.notGoods ? (
+                        <div className="flex h-8 items-center text-[13px] text-slate-400">не товар · не участвует в ценах</div>
+                      ) : (
+                        <input
+                          className="field !h-8"
+                          list={listId}
+                          placeholder="Найти или ввести новый"
+                          aria-label="Товар из справочника"
+                          data-state={warning && !product && !l.newProduct?.name.trim() ? 'warn' : undefined}
+                          value={product?.name ?? l.newProduct?.name ?? ''}
+                          onChange={(e) => setProductText(l, e.target.value)}
+                        />
+                      )}
+                    </td>
+                    <td className="px-3 pt-2">
+                      {l.notGoods ? (
+                        <div className="flex h-8 items-center justify-end text-xs text-slate-400">—</div>
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            className="field num !h-8 text-right"
+                            inputMode="decimal"
+                            aria-label="Количество в единицах товара"
+                            data-state={warning && (product || l.newProduct) ? 'warn' : undefined}
+                            value={l.baseQuantity}
+                            onChange={(e) => patch(l.key, { baseQuantity: e.target.value })}
+                          />
+                          <span className="w-5 shrink-0 text-xs text-slate-500">{unit ?? ''}</span>
                         </div>
                       )}
-                      {error && <div className="mt-1 text-xs text-bad">{error}</div>}
-                      {!error && warning && <div className="mt-1 text-xs text-warn">{warning}</div>}
-                      {hint}
                     </td>
-                    <td className="px-2.5 py-2">
-                      {l.notGoods ? (
-                        <div className="flex h-8 items-center gap-3 text-[13px] text-slate-500">
-                          Не товар
-                          <button className="link" onClick={() => patch(l.key, { notGoods: false })}>
-                            Привязать
+                    <td className="px-3 pt-2">
+                      <input
+                        className="field num !h-8 text-right"
+                        inputMode="decimal"
+                        aria-label="Сумма позиции с НДС"
+                        value={l.lineTotal}
+                        onChange={(e) => patch(l.key, { lineTotal: e.target.value })}
+                      />
+                    </td>
+                    <td className="num px-3 pt-2 text-right text-[13px] whitespace-nowrap">
+                      <span className="leading-8">{price !== null && unit ? `${formatRub(price)}/${unit}` : <span className="text-slate-400">—</span>}</span>
+                    </td>
+                    <td className="pt-2 pr-2 text-center">
+                      <button
+                        className="h-8 w-8 rounded text-base leading-8 text-slate-400 hover:bg-red-50 hover:text-bad"
+                        aria-label="Удалить позицию"
+                        title="Удалить позицию"
+                        onClick={() => remove(l.key)}
+                      >
+                        ×
+                      </button>
+                    </td>
+                  </tr>
+                  <tr className="text-xs">
+                    <td className="truncate px-3 pt-1 pb-2 text-slate-400">
+                      {error ? <span className="text-bad">{error}</span> : warning ? <span className="text-warn">{warning}</span> : <span className="num">{docInfo}</span>}
+                    </td>
+                    <td className="px-3 pt-1 pb-2" colSpan={4}>
+                      <span className="flex flex-wrap items-center gap-x-2 text-slate-500">
+                        {l.notGoods ? (
+                          <button className="link !text-xs" onClick={() => patch(l.key, { notGoods: false })}>
+                            Привязать к товару
                           </button>
-                        </div>
-                      ) : (
-                        <>
-                          <input
-                            className="field !h-8"
-                            list={listId}
-                            placeholder="Найти или ввести новый"
-                            aria-label="Товар из справочника"
-                            value={product?.name ?? l.newProduct?.name ?? ''}
-                            onChange={(e) => setProductText(l, e.target.value)}
-                          />
-                          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                        ) : (
+                          <>
                             {product ? (
-                              <span className="text-slate-500">из справочника · {product.unit}</span>
+                              <span>из справочника · {product.unit}</span>
                             ) : l.newProduct?.name.trim() ? (
-                              <span className="flex items-center gap-1.5 text-slate-500">
+                              <span className="flex items-center gap-1.5">
                                 <span className="font-semibold text-accent">новый товар</span> · ед.
                                 <select
-                                  className="rounded border border-line bg-white px-1 py-0.5 text-xs"
+                                  className="rounded border border-line bg-white px-1 text-xs"
                                   value={l.newProduct.unit}
                                   aria-label="Единица нового товара"
                                   onChange={(e) => patch(l.key, { newProduct: { name: l.newProduct!.name, unit: e.target.value as BaseUnit } })}
@@ -128,56 +225,26 @@ export function LinesEditor({
                                 </select>
                               </span>
                             ) : null}
-                            <button className="link !text-xs" onClick={() => patch(l.key, { notGoods: true, productId: null, newProduct: undefined })}>
-                              Не товар
+                            {(product || l.newProduct?.name.trim()) && <span className="text-slate-300">·</span>}
+                            <button className="link !text-xs !font-normal !text-slate-500 hover:!text-accent" onClick={() => patch(l.key, { notGoods: true, productId: null, newProduct: undefined })}>
+                              не товар
                             </button>
-                          </div>
-                        </>
-                      )}
+                          </>
+                        )}
+                      </span>
                     </td>
-                    <td className="px-2.5 py-2">
-                      {l.notGoods ? (
-                        <span className="text-xs text-slate-400">—</span>
-                      ) : (
-                        <div className="flex items-center gap-1.5">
-                          <input
-                            className="field num !h-8 text-right"
-                            inputMode="decimal"
-                            aria-label="Количество в единицах товара"
-                            value={l.baseQuantity}
-                            onChange={(e) => patch(l.key, { baseQuantity: e.target.value })}
-                          />
-                          <span className="w-6 shrink-0 text-xs text-slate-500">{unit ?? ''}</span>
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-2.5 py-2">
-                      <input
-                        className="field num !h-8 text-right"
-                        inputMode="decimal"
-                        aria-label="Сумма позиции с НДС"
-                        value={l.lineTotal}
-                        onChange={(e) => patch(l.key, { lineTotal: e.target.value })}
-                      />
-                    </td>
-                    <td className="num px-2.5 py-2 text-right text-[13px] whitespace-nowrap">
-                      {price !== null && unit ? (
-                        <span className="leading-8">
-                          {formatRub(price)}/{unit}
-                        </span>
-                      ) : (
-                        <span className="leading-8 text-slate-400">—</span>
-                      )}
-                    </td>
-                    <td className="py-2 pr-2 text-right">
-                      <button className="link link-danger leading-8" aria-label="Удалить позицию" onClick={() => remove(l.key)}>
-                        ×
-                      </button>
-                    </td>
+                    <td />
                   </tr>
-                );
-              })}
-            </tbody>
+                  {hint && (
+                    <tr>
+                      <td colSpan={6} className="px-3 pb-2.5">
+                        {hint}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              );
+            })}
           </table>
           <datalist id={listId}>
             {products.map((p) => (
@@ -189,16 +256,9 @@ export function LinesEditor({
         </div>
       )}
 
-      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px]">
-        <button className="link" onClick={() => onChange([...lines, emptyLine()])}>
-          + Добавить позицию
-        </button>
-        {mismatch && (
-          <span className="text-warn">
-            Позиции не сходятся с итогом на <span className="num font-semibold">{formatRub(Math.abs(sum - amount))}</span>
-          </span>
-        )}
-      </div>
+      <button className="link mt-2 !text-[13px]" onClick={() => onChange([...lines, emptyLine()])}>
+        + Добавить позицию
+      </button>
     </div>
   );
 }
