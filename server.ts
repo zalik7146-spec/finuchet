@@ -13,17 +13,19 @@ try {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isProd = process.argv.includes('--prod');
 const PORT = Number(process.env.PORT) || 3000;
-const MODEL = process.env.GEMINI_MODEL || 'gemini-4-hydrogen';
+const MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 const MAX_FILE_BYTES = 15 * 1024 * 1024;
-const FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODELS ?? 'gemini-3.5-flash-lite')
+const FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODELS ?? 'gemini-3.1-flash-lite,gemini-flash-lite-latest')
   .split(',')
   .map((m) => m.trim())
   .filter(Boolean);
 const MODELS = [...new Set([MODEL, ...FALLBACK_MODELS])];
-const TRY_TIMEOUT_MS = 20_000; // на каждую модель, кроме последней
-const LAST_TIMEOUT_MS = 45_000;
-const COOLDOWN_MS = 10 * 60_000; // сколько не трогать модель после сбоя
-const cooldown = new Map<string, number>();
+// Скан или многостраничный PDF модель может читать полминуты, поэтому основной модели — больше времени.
+// Общий бюджет меньше 90 секунд, которые ждёт браузер, чтобы пользователь получил внятную ошибку, а не обрыв.
+const PRIMARY_TIMEOUT_MS = 40_000;
+const FALLBACK_TIMEOUT_MS = 25_000;
+const TOTAL_BUDGET_MS = 82_000;
+const MIN_ATTEMPT_MS = 8_000; // меньше этого запасной модели давать бессмысленно
 const ALLOWED_MIME = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
 
 interface CategoryRef {
@@ -191,15 +193,18 @@ app.post('/api/expenses/extract', requireMember, upload.single('file'), async (r
       },
     };
 
-    // Основная модель может быть перегружена или недоступна по квоте — тогда пробуем запасные.
-    // Модель, которая только что дала сбой, пропускаем на время COOLDOWN_MS.
-    const now = Date.now();
-    const candidates = MODELS.filter((m, i) => i === MODELS.length - 1 || (cooldown.get(m) ?? 0) < now);
+    // Каждый запрос начинается с основной модели; если она перегружена, исчерпала квоту или молчит,
+    // пробуем запасные, пока не кончится общий бюджет времени.
+    const deadline = Date.now() + TOTAL_BUDGET_MS;
     let responseText: string | undefined;
-    for (const [i, model] of candidates.entries()) {
-      const isLast = i === candidates.length - 1;
+    let sawTimeout = false;
+    let allQuota = true;
+    for (const [i, model] of MODELS.entries()) {
+      const remaining = deadline - Date.now();
+      if (i > 0 && remaining < MIN_ATTEMPT_MS) break;
       const abort = new AbortController();
-      const timer = setTimeout(() => abort.abort(), isLast ? LAST_TIMEOUT_MS : TRY_TIMEOUT_MS);
+      const started = Date.now();
+      const timer = setTimeout(() => abort.abort(), Math.min(i === 0 ? PRIMARY_TIMEOUT_MS : FALLBACK_TIMEOUT_MS, remaining));
       try {
         const response = await ai.models.generateContent({
           model,
@@ -207,24 +212,30 @@ app.post('/api/expenses/extract', requireMember, upload.single('file'), async (r
           config: { abortSignal: abort.signal, temperature: 0, responseMimeType: 'application/json', responseSchema },
         });
         responseText = response.text;
-        if (model !== MODEL) console.log(`[extract] ответила запасная модель ${model}`);
+        console.log(`[extract] ${model}: ответ за ${Date.now() - started} мс${i > 0 ? ' (запасная модель)' : ''}`);
         break;
       } catch (err) {
         const timedOut = abort.signal.aborted;
         const status = (err as { status?: number })?.status;
-        console.error(`[extract] ${model}:`, timedOut ? 'нет ответа вовремя' : `ошибка ${status ?? ''} ${String((err as Error)?.message).slice(0, 300)}`);
-        cooldown.set(model, Date.now() + COOLDOWN_MS);
-        if (!isLast) continue;
-        if (timedOut) {
-          throw new HttpError(504, 'timeout', 'ИИ не ответил вовремя. Попробуйте ещё раз или добавьте расход вручную.');
-        }
-        if (status === 429) {
-          throw new HttpError(429, 'quota', 'Исчерпан лимит запросов к ИИ. Попробуйте позже или добавьте расход вручную.');
-        }
-        throw new HttpError(502, 'ai_error', 'Сервис распознавания вернул ошибку. Попробуйте ещё раз позже.');
+        sawTimeout ||= timedOut;
+        allQuota &&= status === 429;
+        console.error(
+          `[extract] ${model}:`,
+          timedOut ? `нет ответа за ${Date.now() - started} мс` : `ошибка ${status ?? ''} ${String((err as Error)?.message).slice(0, 300)}`,
+        );
       } finally {
         clearTimeout(timer);
       }
+    }
+
+    if (responseText === undefined) {
+      if (allQuota) {
+        throw new HttpError(429, 'quota', 'Исчерпан лимит запросов к ИИ. Попробуйте позже или добавьте расход вручную.');
+      }
+      if (sawTimeout) {
+        throw new HttpError(504, 'timeout', 'ИИ сейчас перегружен и не ответил вовремя. Попробуйте ещё раз через минуту или добавьте расход вручную.');
+      }
+      throw new HttpError(502, 'ai_error', 'Сервис распознавания вернул ошибку. Попробуйте ещё раз позже.');
     }
 
     let parsed: unknown;
