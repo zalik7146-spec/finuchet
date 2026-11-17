@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppUser, Category, DataStore, Draft, Expense, ExpenseInput, Filter } from './types';
-import { NoAccessError, cloudEnabled, createCloudStore, describeError, getAccessToken, signOut, watchAuth } from './lib/supabase';
+import { NoAccessError, cloudEnabled, configError, createCloudStore, describeError, getAccessToken, signOut, watchAuth } from './lib/supabase';
 import { createLocalStore } from './lib/localStore';
 import { emptyDraft, extractExpenses, newKey } from './lib/extract';
 import { applyFilter, periodLabel } from './lib/filters';
@@ -220,6 +220,18 @@ export default function App() {
     }
   };
 
+  if (configError) {
+    return (
+      <main className="flex min-h-full items-center justify-center p-6">
+        <div className="card w-full max-w-md p-8" role="alert">
+          <div className="text-lg font-bold">ФинУчет ИИ</div>
+          <h1 className="mt-6 text-xl font-bold">Ошибка в настройках подключения</h1>
+          <p className="mt-3 text-sm text-slate-600">{configError}</p>
+          <p className="mt-3 text-sm text-slate-500">Исправьте значение в переменных окружения и пересоберите приложение.</p>
+        </div>
+      </main>
+    );
+  }
   if (!authReady) {
     return (
       <div className="flex min-h-full items-center justify-center">

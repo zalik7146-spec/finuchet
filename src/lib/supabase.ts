@@ -2,15 +2,37 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { AppUser, Category, DataStore, Expense, ExpenseInput } from '../types';
 import { DEFAULT_CATEGORIES } from './defaults';
 
-const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const key = import.meta.env.VITE_SUPABASE_KEY as string | undefined;
+/** Убирает пробелы, переносы строк и кавычки, которые легко захватить при вставке значения в панель хостинга. */
+const clean = (v: unknown) =>
+  typeof v === 'string'
+    ? v
+        .trim()
+        .replace(/^["']+|["']+$/g, '')
+        .trim()
+    : '';
+
+const url = clean(import.meta.env.VITE_SUPABASE_URL).replace(/\/+$/, '');
+// В ключе не бывает пробельных символов: перенос строки посреди ключа — след неудачной вставки
+const key = clean(import.meta.env.VITE_SUPABASE_KEY).replace(/\s+/g, '');
+
+/** Понятное описание ошибки в настройках; null, если всё в порядке. */
+export const configError: string | null = (() => {
+  if (!url || !key) return null;
+  if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(url)) {
+    return 'VITE_SUPABASE_URL должен выглядеть как https://xxxx.supabase.co — без пробелов и лишнего текста.';
+  }
+  if (!/^[!-~]+$/.test(key)) {
+    return 'VITE_SUPABASE_KEY содержит нелатинские символы. Скопируйте ключ заново — только сам ключ, одной строкой.';
+  }
+  return null;
+})();
 
 /** Без ключей Supabase приложение работает в демо-режиме. */
 export const cloudEnabled = Boolean(url && key);
 /** Кнопка Google показывается, только когда провайдер настроен в Supabase. */
 export const googleEnabled = cloudEnabled && import.meta.env.VITE_AUTH_GOOGLE === 'true';
 
-const client: SupabaseClient | null = cloudEnabled ? createClient(url!, key!) : null;
+const client: SupabaseClient | null = cloudEnabled && !configError ? createClient(url, key) : null;
 
 export function watchAuth(cb: (user: AppUser | null) => void): () => void {
   if (!client) return () => {};
