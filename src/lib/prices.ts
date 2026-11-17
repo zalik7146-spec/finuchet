@@ -61,6 +61,8 @@ export function priceInsight(productId: string, unitPrice: number, date: string,
 export interface ProductSummary {
   product: Product;
   last: PricePoint | null;
+  /** Предыдущая закупка — для «было → стало». */
+  prev: PricePoint | null;
   /** Последняя цена к предыдущей закупке, %. */
   changePct: number | null;
   /** Куплено за период в базовой единице товара. */
@@ -97,6 +99,7 @@ export function productSummaries(
     return {
       product,
       last,
+      prev,
       changePct: last && prev && prev.unitPrice > 0 ? ((last.unitPrice - prev.unitPrice) / prev.unitPrice) * 100 : null,
       boughtQuantity: Math.round(b.q * 1000) / 1000,
       boughtTotal: Math.round(b.t * 100) / 100,

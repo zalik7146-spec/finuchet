@@ -3,7 +3,7 @@ import type { AppUser, Category, DataStore, Draft, DraftLine, Expense, ExpenseIn
 import { NoAccessError, cloudEnabled, configError, createCloudStore, describeError, getAccessToken, signOut, watchAuth } from './lib/supabase';
 import { createLocalStore } from './lib/localStore';
 import { emptyDraft, extractExpenses, newKey } from './lib/extract';
-import { applyFilter, periodLabel, periodRange, recentFirst } from './lib/filters';
+import { applyFilter, awaitingReceipt, periodLabel, periodRange, previousPeriod, recentFirst, sumAmounts } from './lib/filters';
 import { amountToInput, isValidIsoDate, parseAmount } from './lib/format';
 import { Capture } from './components/Capture';
 import { Categories } from './components/Categories';
@@ -134,6 +134,16 @@ export default function App() {
   const [productsSort, setProductsSort] = useState<'name' | 'change' | 'total'>('name');
   const [openProductId, setOpenProductId] = useState<string | null>(null);
   const openProduct = openProductId ? products.find((p) => p.id === openProductId) : undefined;
+  const previousTotal = useMemo(() => {
+    const prev = previousPeriod(filter);
+    if (!prev) return null;
+    // Тот же фильтр по направлениям и поиску, но за предыдущий период
+    return sumAmounts(applyFilter(expenses, { ...filter, preset: 'custom', from: prev.from, to: prev.to }));
+  }, [expenses, filter]);
+  const awaitingTotals = useMemo(() => {
+    const list = awaitingReceipt(expenses);
+    return { count: list.length, total: sumAmounts(list.map((w) => w.expense)) };
+  }, [expenses]);
   const summaries = useMemo(() => {
     const { from, to } = periodRange(filter);
     return productSummaries(products, points, lines, expenses, from, to);
@@ -280,7 +290,7 @@ export default function App() {
     setExporting(true);
     try {
       const { downloadExcel } = await import('./lib/excel');
-      await downloadExcel(filteredExpenses, categories, filter);
+      await downloadExcel(filteredExpenses, categories, filter, lines, products);
       notify('ok', `Отчёт сформирован: ${filteredExpenses.length} заяв. за период «${periodLabel(filter)}».`);
     } catch (e) {
       console.error(e);
@@ -461,13 +471,31 @@ export default function App() {
                   {view === 'dashboard' ? (
                     <>
                       {loading ? (
-                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3" aria-busy="true">
-                          {[0, 1, 2].map((i) => (
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-busy="true">
+                          {[0, 1, 2, 3].map((i) => (
                             <div key={i} className="skeleton h-[84px]" />
                           ))}
                         </div>
                       ) : (
-                        <Dashboard expenses={filteredExpenses} categories={categories} filter={filter} onToggleCategory={toggleCategory} />
+                        <Dashboard
+                          expenses={filteredExpenses}
+                          previousTotal={previousTotal}
+                          categories={categories}
+                          filter={filter}
+                          awaiting={awaitingTotals}
+                          summaries={summaries}
+                          onToggleCategory={toggleCategory}
+                          onOpenAwaiting={() => {
+                            setPurchasesTab('awaiting');
+                            setView('purchases');
+                          }}
+                          onOpenPriceGrowth={() => {
+                            setProductsSort('change');
+                            setPurchasesTab('products');
+                            setView('purchases');
+                          }}
+                          onOpenProduct={setOpenProductId}
+                        />
                       )}
                       <Registry {...registryProps} expenses={recentFirst(filteredExpenses)} limit={8} onShowAll={() => setView('registry')} />
                     </>

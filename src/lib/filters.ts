@@ -1,5 +1,6 @@
 import type { Category, Expense, Filter, PeriodPreset } from '../types';
 import { formatDate, toIso } from './format';
+import { normalizeVendor } from './duplicates';
 
 export const PRESET_LABEL: Record<PeriodPreset, string> = {
   thisMonth: 'Текущий месяц',
@@ -149,3 +150,52 @@ export function timeline(expenses: Expense[], f: Filter): { granularity: 'day' |
 
 export const round2 = (n: number) => Math.round(n * 100) / 100;
 export const sumAmounts = (expenses: Expense[]) => round2(expenses.reduce((s, e) => s + e.amount, 0));
+
+const MONTHS_SHIFT: Partial<Record<PeriodPreset, number>> = { thisMonth: 1, lastMonth: 1, quarter: 3, year: 12 };
+
+/** Предыдущий период той же длины — для сравнения «к прошлому периоду». Для «Всё время» сравнивать не с чем. */
+export function previousPeriod(f: Filter, now = new Date()): { from: string; to: string } | null {
+  const { from, to } = periodRange(f, now);
+  if (!from || !to) return null;
+  const shift = MONTHS_SHIFT[f.preset];
+  if (shift) {
+    const [y, m] = from.split('-').map(Number);
+    return { from: toIso(new Date(y, m - 1 - shift, 1)), to: toIso(new Date(y, m - 1, 0)) };
+  }
+  const start = parse(from);
+  const days = Math.round((parse(to).getTime() - start.getTime()) / DAY) + 1;
+  const prevTo = new Date(start.getFullYear(), start.getMonth(), start.getDate() - 1);
+  const prevFrom = new Date(prevTo.getFullYear(), prevTo.getMonth(), prevTo.getDate() - (days - 1));
+  return { from: toIso(prevFrom), to: toIso(prevTo) };
+}
+
+/** Сумма расходов в границах дат включительно. */
+export function sumInRange(expenses: Expense[], range: { from: string; to: string }): number {
+  return round2(expenses.reduce((s, e) => (e.date >= range.from && e.date <= range.to ? s + e.amount : s), 0));
+}
+
+/** Топ поставщиков: написания одного контрагента («ООО Комус», «Комус») объединяются, показывается первое встреченное. */
+export function totalsByVendor(expenses: Expense[], limit: number): Array<{ vendor: string; total: number; count: number }> {
+  const acc = new Map<string, { vendor: string; total: number; count: number }>();
+  for (const e of expenses) {
+    const k = normalizeVendor(e.vendor) || e.vendor;
+    const row = acc.get(k) ?? { vendor: e.vendor, total: 0, count: 0 };
+    row.total = round2(row.total + e.amount);
+    row.count += 1;
+    acc.set(k, row);
+  }
+  return [...acc.values()].sort((a, b) => b.total - a.total).slice(0, limit);
+}
+
+export type CategoryBucket = { key: string; total: number } & Record<string, number | string>;
+
+/** Динамика с разбивкой по направлениям: в каждой корзине — сумма по каждому categoryId и общий итог. */
+export function timelineByCategory(expenses: Expense[], f: Filter): { granularity: 'day' | 'month'; buckets: CategoryBucket[] } {
+  const { granularity, buckets } = timeline(expenses, f);
+  const map = new Map<string, CategoryBucket>(buckets.map((b) => [b.key, { key: b.key, total: b.total }]));
+  for (const e of expenses) {
+    const b = map.get(granularity === 'day' ? e.date : e.date.slice(0, 7));
+    if (b) b[e.categoryId] = round2(((b[e.categoryId] as number | undefined) ?? 0) + e.amount);
+  }
+  return { granularity, buckets: [...map.values()] };
+}

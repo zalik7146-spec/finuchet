@@ -1,5 +1,5 @@
 import type { Worksheet } from 'exceljs';
-import type { Category, Expense, Filter } from '../types';
+import type { Category, Expense, ExpenseLine, Filter, Product } from '../types';
 import { periodLabel, periodRange, sumAmounts, timeline, totalsByCategory } from './filters';
 import { CONFIDENCE_LABEL, SOURCE_LABEL, formatBucket, toIso, todayIso } from './format';
 
@@ -47,7 +47,38 @@ const isoToUtcDate = (iso: string) => {
 };
 
 /** Формирует .xlsx строго по переданной (уже отфильтрованной) выборке и скачивает его. */
-export async function downloadExcel(expenses: Expense[], categories: Category[], filter: Filter): Promise<void> {
+/** Строки листа «Позиции»: только позиции расходов из выборки, по дате документа. */
+export function buildPositionsRows(expenses: Expense[], lines: ExpenseLine[], products: Product[]): Array<Array<string | number | Date>> {
+  const byExpense = new Map(expenses.map((e) => [e.id, e]));
+  const byProduct = new Map(products.map((p) => [p.id, p]));
+  return lines
+    .filter((l) => byExpense.has(l.expenseId))
+    .map((l) => ({ l, e: byExpense.get(l.expenseId)! }))
+    .sort((a, b) => (a.e.date < b.e.date ? -1 : a.e.date > b.e.date ? 1 : a.e.createdAt - b.e.createdAt || a.l.position - b.l.position))
+    .map(({ l, e }) => {
+      const p = l.productId ? byProduct.get(l.productId) : undefined;
+      const qty = p && l.baseQuantity ? l.baseQuantity : '';
+      return [
+        isoToUtcDate(e.date),
+        e.vendor,
+        e.documentNumber,
+        p?.name ?? '',
+        l.rawName,
+        qty,
+        p && qty !== '' ? p.unit : '',
+        l.lineTotal,
+        typeof qty === 'number' ? Math.round((l.lineTotal / qty) * 100) / 100 : '',
+      ];
+    });
+}
+
+export async function downloadExcel(
+  expenses: Expense[],
+  categories: Category[],
+  filter: Filter,
+  lines: ExpenseLine[] = [],
+  products: Product[] = [],
+): Promise<void> {
   const ExcelJS = (await import('exceljs')).default;
   const wb = new ExcelJS.Workbook();
   wb.creator = 'ФинУчет ИИ';
@@ -144,6 +175,23 @@ export async function downloadExcel(expenses: Expense[], categories: Category[],
   styleHeader(dynamics);
   styleTotal(dynamics, dynTotal.number);
   autoWidth(dynamics, [3]);
+
+  // --- Позиции ---
+  const positionRows = buildPositionsRows(expenses, lines, products);
+  if (positionRows.length) {
+    const positions = wb.addWorksheet('Позиции');
+    positions.addRow(['Дата', 'Поставщик', '№ документа', 'Товар', 'Позиция в документе', 'Кол-во', 'Ед.', 'Сумма с НДС', 'Цена за ед.']);
+    positionRows.forEach((r) => positions.addRow(r));
+    positions.getColumn(1).numFmt = 'dd.mm.yyyy';
+    positions.getColumn(1).alignment = { horizontal: 'left' };
+    positions.getColumn(6).numFmt = '#,##0.###';
+    positions.getColumn(8).numFmt = RUB;
+    positions.getColumn(9).numFmt = RUB;
+    styleHeader(positions);
+    positions.autoFilter = { from: 'A1', to: `I${positionRows.length + 1}` };
+    autoWidth(positions, [8, 9]);
+    positions.getColumn(5).width = Math.min(positions.getColumn(5).width ?? 30, 50);
+  }
 
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
