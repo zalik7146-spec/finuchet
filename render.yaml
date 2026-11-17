@@ -1,0 +1,25 @@
+# Размещение на Render (бесплатный тариф): один сервис отдаёт и сайт, и распознавание.
+services:
+  - type: web
+    name: finuchet-ai
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: 24
+      - key: GEMINI_API_KEY
+        sync: false # вводится вручную в панели Render
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash-lite
+      - key: GEMINI_FALLBACK_MODELS
+        value: gemini-3.8-flash,gemini-4-hydrogen
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_KEY
+        sync: false
+      - key: VITE_AUTH_GOOGLE
+        value: "false"
