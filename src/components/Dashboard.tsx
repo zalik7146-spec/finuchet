@@ -89,7 +89,7 @@ export function Dashboard({
   onOpenProduct,
   recent,
 }: {
-  /** Последние операции — сразу под карточками, чтобы были под рукой. */
+  /** Последние операции — между графиками и поставщиками, чтобы были под рукой. */
   recent?: ReactNode;
   /** Отфильтрованная выборка. */
   expenses: Expense[];
@@ -163,8 +163,6 @@ export function Dashboard({
           mono={false}
         />
       </div>
-
-      {recent}
 
       <div className="grid gap-4 xl:grid-cols-5">
         <Panel title="Расходы по времени" subtitle={`${granularity === 'day' ? 'По дням' : 'По месяцам'}, ₽ · цвет — направление`} className="xl:col-span-3">
@@ -300,6 +298,8 @@ export function Dashboard({
           )}
         </Panel>
       </div>
+
+      {recent}
 
       <div className="grid gap-4 xl:grid-cols-2">
         <Panel title="Топ-10 поставщиков" subtitle="По сумме за период">
