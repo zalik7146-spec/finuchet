@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type SVGProps } from 'react';
 import type { AppUser, Category, DataStore, Draft, DraftLine, Expense, ExpenseInput, ExpenseLine, Filter, Product } from './types';
 import { NoAccessError, cloudEnabled, configError, createCloudStore, describeError, getAccessToken, signOut, watchAuth } from './lib/supabase';
 import { createLocalStore } from './lib/localStore';
@@ -8,6 +8,7 @@ import { amountToInput, isValidIsoDate, parseAmount } from './lib/format';
 import { Capture } from './components/Capture';
 import { Categories } from './components/Categories';
 import { Dashboard } from './components/Dashboard';
+import { IconCategories, IconLogout, IconMembers, IconOverview, IconPurchases, IconRegistry } from './components/icons';
 import { Duplicates } from './components/Duplicates';
 import { findDuplicatePairs } from './lib/duplicates';
 import { aliasUpdates, lineToDraft, linesForSave, lineUnitPrice, newProductsToCreate } from './lib/draftLines';
@@ -25,12 +26,12 @@ import { ReviewDialog, ReviewSkeleton } from './components/ReviewDialog';
 import { Confirm, Toasts, type Toast } from './components/ui';
 
 type View = 'dashboard' | 'registry' | 'purchases' | 'categories' | 'members';
-const VIEWS: { id: View; label: string }[] = [
-  { id: 'dashboard', label: 'Обзор' },
-  { id: 'registry', label: 'Реестр заявок' },
-  { id: 'purchases', label: 'Закупки' },
-  { id: 'categories', label: 'Направления' },
-  ...(cloudEnabled ? [{ id: 'members' as const, label: 'Участники' }] : []),
+const VIEWS: { id: View; label: string; Icon: (p: SVGProps<SVGSVGElement>) => ReactElement }[] = [
+  { id: 'dashboard', label: 'Обзор', Icon: IconOverview },
+  { id: 'registry', label: 'Реестр заявок', Icon: IconRegistry },
+  { id: 'purchases', label: 'Закупки', Icon: IconPurchases },
+  { id: 'categories', label: 'Направления', Icon: IconCategories },
+  ...(cloudEnabled ? [{ id: 'members' as const, label: 'Участники', Icon: IconMembers }] : []),
 ];
 
 const DEMO_USER: AppUser = { uid: 'demo', name: 'Демо-режим', email: 'данные хранятся в этом браузере' };
@@ -367,36 +368,61 @@ export default function App() {
     <div className="flex min-h-full">
       {navOpen && <div className="fixed inset-0 z-30 bg-slate-900/40 lg:hidden" onClick={() => setNavOpen(false)} />}
       <aside
-        className={`fixed inset-y-0 left-0 z-30 flex w-[248px] flex-col border-r border-line bg-white transition-transform lg:translate-x-0 ${navOpen ? 'translate-x-0' : '-translate-x-full'}`}
+        className={`fixed inset-y-0 left-0 z-30 flex w-[208px] flex-col border-r border-line bg-white transition-transform lg:translate-x-0 ${navOpen ? 'translate-x-0' : '-translate-x-full'}`}
       >
-        <div className="flex h-14 items-center border-b border-line px-5 text-[15px] font-bold">ФинУчет ИИ</div>
-        <nav className="flex flex-1 flex-col gap-0.5 p-3" aria-label="Разделы">
-          {VIEWS.map((v) => (
-            <button
-              key={v.id}
-              aria-current={view === v.id ? 'page' : undefined}
-              onClick={() => {
-                setView(v.id);
-                setNavOpen(false);
-              }}
-              className={`h-9 rounded-md px-3 text-left text-sm font-semibold ${view === v.id ? 'bg-slate-100 text-ink' : 'text-slate-600 hover:bg-slate-50'}`}
-            >
-              {v.label}
-            </button>
-          ))}
+        <div className="flex h-14 items-center gap-2.5 border-b border-line px-4">
+          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-ink text-[13px] font-bold text-white" aria-hidden="true">
+            ₽
+          </span>
+          <span className="text-[15px] font-bold tracking-tight">ФинУчет ИИ</span>
+        </div>
+        <nav className="flex flex-1 flex-col gap-0.5 p-2.5" aria-label="Разделы">
+          {VIEWS.map(({ id, label, Icon }) => {
+            const active = view === id;
+            const badge = id === 'purchases' ? awaitingTotals.count : id === 'registry' ? duplicatePairs.length : 0;
+            return (
+              <button
+                key={id}
+                aria-current={active ? 'page' : undefined}
+                onClick={() => {
+                  setView(id);
+                  setNavOpen(false);
+                }}
+                className={`flex h-9 items-center gap-2.5 rounded-md px-2.5 text-left text-sm font-semibold ${active ? 'bg-slate-100 text-ink' : 'text-slate-600 hover:bg-slate-50 hover:text-ink'}`}
+              >
+                <Icon className={active ? 'text-accent' : 'text-slate-400'} />
+                <span className="min-w-0 flex-1 truncate">{label}</span>
+                {badge > 0 && (
+                  <span
+                    className={`num min-w-5 rounded-full px-1.5 text-center text-[11px] leading-5 font-semibold ${id === 'registry' ? 'bg-amber-100 text-warn' : 'bg-blue-50 text-accent'}`}
+                    title={id === 'registry' ? 'Возможные дубли' : 'Ожидают получения'}
+                  >
+                    {badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </nav>
-        <div className="border-t border-line p-4">
-          <div className="truncate text-sm font-semibold">{user.name}</div>
-          <div className="truncate text-xs text-slate-500">{user.email}</div>
+        <div className="flex items-center gap-2.5 border-t border-line p-3">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[13px] font-bold text-slate-600 uppercase" aria-hidden="true">
+            {(cloudEnabled ? user.email : user.name).slice(0, 1)}
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[13px] font-semibold" title={cloudEnabled ? user.email : user.name}>
+              {cloudEnabled ? user.email : user.name}
+            </div>
+            {!cloudEnabled && <div className="truncate text-xs text-slate-500">данные в этом браузере</div>}
+          </div>
           {cloudEnabled && (
-            <button className="link mt-2" onClick={() => signOut().catch(fail)}>
-              Выйти
+            <button className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-ink" title="Выйти" aria-label="Выйти" onClick={() => signOut().catch(fail)}>
+              <IconLogout />
             </button>
           )}
         </div>
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col lg:pl-[248px]">
+      <div className="flex min-w-0 flex-1 flex-col lg:pl-[208px]">
         <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-line bg-white px-4 sm:px-6">
           <button className="btn !px-2.5 lg:hidden" onClick={() => setNavOpen(true)} aria-label="Открыть меню">
             ☰

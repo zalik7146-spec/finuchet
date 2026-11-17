@@ -115,12 +115,15 @@ const parse = (iso: string) => {
 };
 
 /** Динамика: по дням для периодов до 62 дней, иначе по месяцам. Пустые интервалы заполняются нулями. */
-export function timeline(expenses: Expense[], f: Filter): { granularity: 'day' | 'month'; buckets: Bucket[] } {
+export function timeline(expenses: Expense[], f: Filter, now = new Date()): { granularity: 'day' | 'month'; buckets: Bucket[] } {
   if (!expenses.length) return { granularity: 'day', buckets: [] };
-  const range = periodRange(f);
+  const range = periodRange(f, now);
   const dates = expenses.map((e) => e.date).sort();
+  const last = dates[dates.length - 1];
   const from = range.from || dates[0];
-  const to = range.to || dates[dates.length - 1];
+  // Будущие дни текущего периода пустые — график заканчивается сегодня (или последним документом, если он позже)
+  const today = toIso(now);
+  const to = !range.to ? last : range.to > today ? (last > today ? last : today) : range.to;
   const start = parse(from);
   const end = parse(to);
   const days = Math.round((end.getTime() - start.getTime()) / DAY) + 1;

@@ -1,5 +1,6 @@
-import { useMemo, type ReactNode } from 'react';
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { useId, useMemo, type ReactNode } from 'react';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { IconPie, IconTrendUp, IconTruck, IconWallet } from './icons';
 import type { Category, Expense, Filter } from '../types';
 import { sumAmounts, timelineByCategory, totalsByCategory, totalsByVendor } from '../lib/filters';
 import type { ProductSummary } from '../lib/prices';
@@ -7,41 +8,81 @@ import { formatBucket, formatRub, formatRubShort } from '../lib/format';
 
 const pctText = (n: number) => `${n > 0 ? '+' : ''}${n.toLocaleString('ru-RU', { maximumFractionDigits: 1 })}%`;
 
+/** Мини-график под числом в карточке показателя. */
+function Sparkline({ values }: { values: number[] }) {
+  const id = useId();
+  if (values.length < 2 || values.every((v) => v === 0)) return null;
+  const data = values.map((v, i) => ({ i, v }));
+  return (
+    <div className="-mx-4 -mb-3.5 mt-2 h-11" aria-hidden="true">
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={data} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+          <defs>
+            <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#2563EB" stopOpacity={0.18} />
+              <stop offset="100%" stopColor="#2563EB" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <Area type="monotone" dataKey="v" stroke="#2563EB" strokeWidth={1.5} fill={`url(#${id})`} isAnimationActive={false} />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/** Бейдж изменения к прошлому периоду: рост расходов — нейтральный, это не обязательно плохо. */
+function DeltaBadge({ pct, title }: { pct: number; title: string }) {
+  const arrow = pct > 0.05 ? '▲' : pct < -0.05 ? '▼' : '=';
+  return (
+    <span className="num shrink-0 rounded-md bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-700" title={title}>
+      {arrow} {Math.abs(pct).toLocaleString('ru-RU', { maximumFractionDigits: 1 })}%
+    </span>
+  );
+}
+
 function Kpi({
+  icon,
   label,
   value,
+  badge,
   hint,
-  note,
+  spark,
   mono = true,
   onClick,
 }: {
+  icon: ReactNode;
   label: string;
   value: string;
+  /** Справа от подписи — например, изменение к прошлому периоду. */
+  badge?: ReactNode;
   hint?: ReactNode;
-  /** Вторая строка под числом — например, сравнение с прошлым периодом. */
-  note?: ReactNode;
+  spark?: number[];
   mono?: boolean;
   onClick?: () => void;
 }) {
   const body = (
     <>
-      <div className="flex items-baseline justify-between gap-2 text-[13px] font-medium text-slate-500">
-        {label}
-        {onClick && <span className="text-xs text-slate-400 group-hover:text-accent">открыть →</span>}
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex min-w-0 items-center gap-2 text-[13px] font-medium text-slate-500">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-600 group-hover:bg-blue-50 group-hover:text-accent">{icon}</span>
+          <span className="truncate">{label}</span>
+        </span>
+        {badge}
       </div>
-      <div className={`mt-1 truncate text-[22px] leading-8 font-semibold tracking-tight ${mono ? 'num' : ''}`} title={value}>
+      <div className={`mt-2.5 truncate text-[22px] leading-8 font-semibold tracking-tight ${mono ? 'num' : ''}`} title={value}>
         {value}
       </div>
       {hint && <div className="truncate text-[13px] text-slate-500">{hint}</div>}
-      {note && <div className="mt-0.5 truncate text-[13px] text-slate-500">{note}</div>}
+      {spark && <Sparkline values={spark} />}
     </>
   );
+  const cls = 'card flex flex-col overflow-hidden px-4 py-3.5 text-left';
   return onClick ? (
-    <button className="card group px-4 py-3.5 text-left hover:border-slate-300 focus-visible:outline-2 focus-visible:outline-accent" onClick={onClick}>
+    <button className={`${cls} group hover:border-slate-300 focus-visible:outline-2 focus-visible:outline-accent`} onClick={onClick}>
       {body}
     </button>
   ) : (
-    <div className="card px-4 py-3.5">{body}</div>
+    <div className={cls}>{body}</div>
   );
 }
 
@@ -106,31 +147,44 @@ export function Dashboard({
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Kpi
+          icon={<IconWallet />}
           label="Расходы за период"
           value={formatRub(total)}
-          hint={`${count} ${count % 10 === 1 && count % 100 !== 11 ? 'заявка' : [2, 3, 4].includes(count % 10) && ![12, 13, 14].includes(count % 100) ? 'заявки' : 'заявок'}`}
-          note={
-            previousTotal === null ? undefined : delta === null ? (
-              'в прошлом периоде расходов не было'
-            ) : (
-              <>
-                <span className="num font-semibold text-ink">
-                  {delta > 0 ? '▲' : delta < 0 ? '▼' : '='} {pctText(delta).replace(/^[+-]/, '')}
-                </span>{' '}
-                к тому же сроку прошлого периода
-              </>
-            )
+          badge={delta !== null ? <DeltaBadge pct={delta} title="К тому же сроку прошлого периода" /> : undefined}
+          hint={
+            <>
+              {count} {count % 10 === 1 && count % 100 !== 11 ? 'заявка' : [2, 3, 4].includes(count % 10) && ![12, 13, 14].includes(count % 100) ? 'заявки' : 'заявок'}
+              {previousTotal === null ? '' : delta === null ? ' · в прошлом периоде расходов не было' : ' · к прошлому периоду'}
+            </>
           }
+          spark={buckets.map((b) => b.total)}
         />
-        <Kpi label="Закупки в пути" value={formatRub(awaiting.total)} hint={`${awaiting.count} ожидают получения`} onClick={onOpenAwaiting} />
         <Kpi
+          icon={<IconTruck />}
+          label="Закупки в пути"
+          value={formatRub(awaiting.total)}
+          hint={awaiting.count ? `${awaiting.count} ожидают получения` : 'всё получено'}
+          onClick={onOpenAwaiting}
+        />
+        <Kpi
+          icon={<IconTrendUp />}
           label="Подорожало"
-          value={`${risen.length} ${risen.length === 1 ? 'товар' : risen.length >= 2 && risen.length <= 4 ? 'товара' : 'товаров'}`}
-          hint="к предыдущей закупке"
+          value={
+            risen.length === 0
+              ? 'Цены не росли'
+              : `${risen.length} ${risen.length % 10 === 1 && risen.length % 100 !== 11 ? 'товар' : [2, 3, 4].includes(risen.length % 10) && ![12, 13, 14].includes(risen.length % 100) ? 'товара' : 'товаров'}`
+          }
+          hint={risen.length ? `сильнее всего: ${risen[0].product.name} +${risen[0].changePct!.toLocaleString('ru-RU', { maximumFractionDigits: 1 })}%` : 'к предыдущей закупке'}
           mono={false}
           onClick={onOpenPriceGrowth}
         />
-        <Kpi label="Топ-направление" value={top?.name ?? '—'} hint={top ? `${formatRub(top.total)} · ${(top.share * 100).toFixed(1)}%` : undefined} mono={false} />
+        <Kpi
+          icon={<IconPie />}
+          label="Топ-направление"
+          value={top?.name ?? '—'}
+          hint={top ? `${formatRub(top.total)} · ${(top.share * 100).toLocaleString('ru-RU', { maximumFractionDigits: 1 })}%` : undefined}
+          mono={false}
+        />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-5">
@@ -207,7 +261,38 @@ export function Dashboard({
           {count === 0 ? (
             <Empty />
           ) : (
-            <ul className="mt-3 flex flex-col">
+            <div className="mt-3 flex flex-col items-center gap-4 sm:flex-row sm:items-start xl:flex-col xl:items-center 2xl:flex-row 2xl:items-start">
+              <div className="relative h-44 w-44 shrink-0">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={byCat}
+                      dataKey="total"
+                      nameKey="name"
+                      innerRadius="68%"
+                      outerRadius="100%"
+                      paddingAngle={byCat.length > 1 ? 1.5 : 0}
+                      stroke="none"
+                      isAnimationActive={false}
+                      onClick={(d) => onToggleCategory((d as unknown as { id: string }).id)}
+                    >
+                      {byCat.map((c) => (
+                        <Cell
+                          key={c.id}
+                          fill={c.color}
+                          className="cursor-pointer outline-none"
+                          opacity={filter.categoryIds.length && !filter.categoryIds.includes(c.id) ? 0.35 : 1}
+                        />
+                      ))}
+                    </Pie>
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+                  <span className="text-xs text-slate-500">всего</span>
+                  <span className="num text-[15px] font-semibold">{formatRubShort(total)} ₽</span>
+                </div>
+              </div>
+              <ul className="flex w-full min-w-0 flex-1 flex-col">
               {byCat.map((c) => {
                 const on = filter.categoryIds.includes(c.id);
                 return (
@@ -215,25 +300,24 @@ export function Dashboard({
                     <button
                       onClick={() => onToggleCategory(c.id)}
                       aria-pressed={on}
-                      className={`w-full rounded px-2 py-2 text-left hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-accent ${on ? 'bg-slate-100' : ''}`}
+                      className={`flex w-full items-baseline justify-between gap-3 rounded px-2 py-1.5 text-left text-sm hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-accent ${on ? 'bg-slate-100' : ''}`}
                     >
-                      <div className="flex items-baseline justify-between gap-3 text-sm">
-                        <span className="flex min-w-0 items-center gap-2">
-                          <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: c.color }} />
-                          <span className="truncate font-medium">{c.name}</span>
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: c.color }} />
+                        <span className="truncate font-medium" title={c.name}>
+                          {c.name}
                         </span>
-                        <span className="num shrink-0 text-[13px]">
-                          {formatRub(c.total)} <span className="text-slate-400">· {(c.share * 100).toFixed(1)}%</span>
-                        </span>
-                      </div>
-                      <div className="mt-1.5 h-1.5 rounded-full bg-slate-100">
-                        <div className="h-1.5 rounded-full" style={{ width: `${Math.max(c.share * 100, 1)}%`, background: c.color }} />
-                      </div>
+                      </span>
+                      <span className="num shrink-0 text-[13px]">
+                        {(c.share * 100).toLocaleString('ru-RU', { maximumFractionDigits: 1 })}%
+                        <span className="ml-2 text-slate-400">{formatRubShort(c.total)}</span>
+                      </span>
                     </button>
                   </li>
                 );
               })}
-            </ul>
+              </ul>
+            </div>
           )}
         </Panel>
       </div>

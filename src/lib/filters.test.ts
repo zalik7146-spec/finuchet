@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import type { Filter } from '../types';
-import { awaitingReceipt, previousPeriod, recentFirst, timelineByCategory, totalsByVendor } from './filters';
+import { awaitingReceipt, previousPeriod, recentFirst, timeline, timelineByCategory, totalsByVendor } from './filters';
 import { exp } from './test-helpers';
 
 test('recentFirst сортирует по времени добавления, а не по дате документа', () => {
@@ -80,4 +80,20 @@ test('timelineByCategory раскладывает суммы по направл
   const { buckets } = timelineByCategory(list, f('custom', '2026-11-01', '2026-11-03'));
   expect(buckets.find((b) => b.key === '2026-11-02')).toMatchObject({ x: 10, y: 5, total: 15 });
   expect(buckets).toHaveLength(3);
+});
+
+test('timeline текущего месяца заканчивается сегодня, а не концом месяца', () => {
+  const { buckets } = timeline([exp({ date: '2026-11-05' })], f('thisMonth'), new Date(2026, 10, 17));
+  expect(buckets.at(-1)?.key).toBe('2026-11-17');
+  expect(buckets).toHaveLength(17);
+});
+
+test('timeline показывает и расходы с датой документа позже сегодняшней', () => {
+  const { buckets } = timeline([exp({ date: '2026-11-26' })], f('thisMonth'), new Date(2026, 10, 17));
+  expect(buckets.at(-1)?.key).toBe('2026-11-26');
+});
+
+test('timeline прошлого месяца — весь месяц', () => {
+  const { buckets } = timeline([exp({ date: '2026-10-05' })], f('lastMonth'), new Date(2026, 10, 17));
+  expect(buckets.at(-1)?.key).toBe('2026-10-31');
 });
