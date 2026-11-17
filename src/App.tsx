@@ -10,7 +10,7 @@ import { Categories } from './components/Categories';
 import { Dashboard } from './components/Dashboard';
 import { Duplicates } from './components/Duplicates';
 import { findDuplicatePairs } from './lib/duplicates';
-import { aliasUpdates, draftLinesToInput, lineToDraft, lineUnitPrice, newProductsToCreate } from './lib/draftLines';
+import { aliasUpdates, lineToDraft, linesForSave, lineUnitPrice, newProductsToCreate } from './lib/draftLines';
 import { priceInsight, pricePoints, productSummaries } from './lib/prices';
 import { ProductCard } from './components/ProductCard';
 import { Products } from './components/Products';
@@ -201,7 +201,7 @@ export default function App() {
     sourceFileName: d.sourceFileName,
     aiConfidence: d.aiConfidence,
     isPurchase: d.isPurchase,
-    lines: draftLinesToInput(d.lines, idByName),
+    lines: linesForSave(d, idByName),
   });
 
   /** Сохранение пакета: сначала новые товары справочника, затем расходы с позициями, затем новые названия в алиасы товаров. */

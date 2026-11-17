@@ -34,12 +34,24 @@ test('awaitingReceipt: документ с датой в будущем ждёт
 
 const f = (preset: Filter['preset'], from = '', to = ''): Filter => ({ preset, from, to, categoryIds: [], search: '' });
 
-test('previousPeriod: текущий месяц в ноябре → весь октябрь', () => {
-  expect(previousPeriod(f('thisMonth'), new Date(2026, 10, 17))).toEqual({ from: '2026-10-01', to: '2026-10-31' });
+test('previousPeriod: текущий месяц 17 ноября → 1–17 октября (столько же дней)', () => {
+  expect(previousPeriod(f('thisMonth'), new Date(2026, 10, 17))).toEqual({ from: '2026-10-01', to: '2026-10-17' });
 });
 
-test('previousPeriod: квартал → предыдущий квартал', () => {
-  expect(previousPeriod(f('quarter'), new Date(2026, 10, 17))).toEqual({ from: '2026-07-01', to: '2026-09-30' });
+test('previousPeriod: 31 марта → прошлый месяц обрезается по его концу', () => {
+  expect(previousPeriod(f('thisMonth'), new Date(2026, 2, 31))).toEqual({ from: '2026-02-01', to: '2026-02-28' });
+});
+
+test('previousPeriod: прошлый месяц уже закончился → сравнивается целиком', () => {
+  expect(previousPeriod(f('lastMonth'), new Date(2026, 10, 17))).toEqual({ from: '2026-09-01', to: '2026-09-30' });
+});
+
+test('previousPeriod: год на 17 ноября → прошлый год по 17 ноября', () => {
+  expect(previousPeriod(f('year'), new Date(2026, 10, 17))).toEqual({ from: '2025-01-01', to: '2025-11-17' });
+});
+
+test('previousPeriod: квартал 17 ноября → июль–17 августа (столько же дней от начала)', () => {
+  expect(previousPeriod(f('quarter'), new Date(2026, 10, 17))).toEqual({ from: '2026-07-01', to: '2026-08-17' });
 });
 
 test('previousPeriod: произвольный диапазон → такой же длины перед ним', () => {

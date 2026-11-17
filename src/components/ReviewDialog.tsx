@@ -100,7 +100,7 @@ export function ReviewDialog({
 
   /** Позиции изменились: «Покупка товара» следует за наличием товаров, пока пользователь не трогал галочку сам. */
   const setLines = (d: Draft, lines: DraftLine[]) =>
-    patch(d.key, d.purchaseTouched ? { lines } : { lines, isPurchase: lines.some((l) => !l.notGoods) });
+    patch(d.key, d.purchaseTouched ? { lines, linesDirty: true } : { lines, linesDirty: true, isPurchase: lines.some((l) => !l.notGoods) });
   const total = drafts.reduce((s, d) => s + (parseAmount(d.amount) || 0), 0);
   const attention = drafts.filter((d) => d.sourceType !== 'manual' && d.aiConfidence !== 'high').length;
 

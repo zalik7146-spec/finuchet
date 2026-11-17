@@ -160,7 +160,16 @@ export function previousPeriod(f: Filter, now = new Date()): { from: string; to:
   const shift = MONTHS_SHIFT[f.preset];
   if (shift) {
     const [y, m] = from.split('-').map(Number);
-    return { from: toIso(new Date(y, m - 1 - shift, 1)), to: toIso(new Date(y, m - 1, 0)) };
+    const prevFrom = new Date(y, m - 1 - shift, 1);
+    const prevEnd = new Date(y, m - 1, 0);
+    // Период ещё идёт (текущий месяц, квартал, год) — сравниваем с тем же числом дней от начала прошлого
+    const today = toIso(now);
+    if (today >= from && today <= to) {
+      const elapsed = Math.round((parse(today).getTime() - parse(from).getTime()) / DAY);
+      const cut = new Date(prevFrom.getFullYear(), prevFrom.getMonth(), prevFrom.getDate() + elapsed);
+      return { from: toIso(prevFrom), to: toIso(cut < prevEnd ? cut : prevEnd) };
+    }
+    return { from: toIso(prevFrom), to: toIso(prevEnd) };
   }
   const start = parse(from);
   const days = Math.round((parse(to).getTime() - start.getTime()) / DAY) + 1;

@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import type { DraftLine, Product } from '../types';
-import { aliasUpdates, draftLinesToInput, lineUnitPrice, newProductsToCreate, validateLine } from './draftLines';
+import { aliasUpdates, draftLinesToInput, lineUnitPrice, lineWarning, linesForSave, newProductsToCreate, validateLine } from './draftLines';
 
 const flour: Product = { id: 'p1', name: 'Мука пшеничная в/с', unit: 'кг', aliases: [], createdAt: 0 };
 const dl = (over: Partial<DraftLine>): DraftLine => ({
@@ -24,12 +24,37 @@ test('без количества цены нет', () => {
   expect(lineUnitPrice(dl({ baseQuantity: '0' }))).toBeNull();
 });
 
-test('строка товара без товара и без нового названия — ошибка', () => {
-  expect(validateLine(dl({}))).toBe('Выберите товар или отметьте «Не товар»');
+test('строка товара без товара не блокирует сохранение, но предупреждает', () => {
+  expect(validateLine(dl({}))).toBeNull();
+  expect(lineWarning(dl({}))).toBe('Не привязана к товару — не попадёт в сравнение цен');
 });
 
-test('строка товара без количества — ошибка', () => {
-  expect(validateLine(dl({ productId: 'p1', baseQuantity: '' }))).toBe('Укажите количество в единицах товара');
+test('строка товара без количества не блокирует сохранение, но предупреждает', () => {
+  expect(validateLine(dl({ productId: 'p1', baseQuantity: '' }))).toBeNull();
+  expect(lineWarning(dl({ productId: 'p1', baseQuantity: '' }))).toBe('Нет количества — цена за единицу не посчитается');
+});
+
+test('пустое название позиции — по-прежнему ошибка', () => {
+  expect(validateLine(dl({ rawName: ' ' }))).toBe('Укажите название позиции');
+});
+
+test('нерешённая строка сохраняется без товара и без количества', () => {
+  const [l] = draftLinesToInput([dl({ baseQuantity: '0' })], new Map());
+  expect(l.productId).toBeNull();
+  expect(l.baseQuantity).toBeNull();
+});
+
+// Finding 1: правка расхода не должна стирать позиции, если их не трогали
+test('linesForSave: у сохранённого расхода без изменений позиций — undefined', () => {
+  expect(linesForSave({ id: 'e1', linesDirty: false, lines: [] }, new Map())).toBeUndefined();
+});
+
+test('linesForSave: изменённые позиции сохранённого расхода передаются', () => {
+  expect(linesForSave({ id: 'e1', linesDirty: true, lines: [dl({ productId: 'p1' })] }, new Map())).toHaveLength(1);
+});
+
+test('linesForSave: у нового расхода позиции передаются всегда', () => {
+  expect(linesForSave({ linesDirty: false, lines: [dl({ productId: 'p1' })] }, new Map())).toHaveLength(1);
 });
 
 test('«не товар» без количества — допустимо', () => {

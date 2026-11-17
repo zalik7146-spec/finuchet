@@ -94,6 +94,8 @@ export interface Draft {
   /** Пользователь сам ставил или снимал «Покупка товара» — больше не переключаем автоматически. */
   purchaseTouched?: boolean;
   lines: DraftLine[];
+  /** Позиции меняли на экране проверки — только тогда у сохранённого расхода они перезаписываются. */
+  linesDirty?: boolean;
 }
 
 export type PeriodPreset = 'thisMonth' | 'lastMonth' | 'quarter' | 'year' | 'all' | 'custom';

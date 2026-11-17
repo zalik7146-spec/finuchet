@@ -94,6 +94,14 @@ test('productSummaries: изменение — по двум последним 
   expect(s.changePct).toBeCloseTo(11.538, 2);
 });
 
+test('productSummaries: последняя цена — не позже конца периода', () => {
+  const expenses = [exp({ id: 'oct', date: '2026-10-10' }), exp({ id: 'nov', date: '2026-11-10' })];
+  const lines = [line({ id: 'a', expenseId: 'oct', baseQuantity: 100, lineTotal: 2600 }), line({ id: 'b', expenseId: 'nov', baseQuantity: 500, lineTotal: 14500 })];
+  const [s] = productSummaries([product('flour')], pricePoints(lines, expenses), lines, expenses, '2026-10-01', '2026-10-31');
+  expect(s.last?.expenseId).toBe('oct');
+  expect(s.changePct).toBeNull();
+});
+
 test('productSummaries: товар без закупок', () => {
   const [s] = productSummaries([product('salt')], [], [], [], '', '');
   expect(s).toMatchObject({ last: null, changePct: null, boughtQuantity: 0, boughtTotal: 0 });

@@ -81,7 +81,8 @@ export function productSummaries(
 ): ProductSummary[] {
   const dateById = new Map(expenses.map((e) => [e.id, e.date]));
   const byProduct = new Map<string, PricePoint[]>();
-  for (const p of points) byProduct.set(p.productId, [...(byProduct.get(p.productId) ?? []), p]);
+  // «Последняя» и «предыдущая» цены — на конец периода: более поздние закупки в прошлый период не попадают
+  for (const p of points) if (!to || p.date <= to) byProduct.set(p.productId, [...(byProduct.get(p.productId) ?? []), p]);
   const bought = new Map<string, { q: number; t: number }>();
   for (const l of lines) {
     const date = dateById.get(l.expenseId);

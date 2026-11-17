@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { AppUser, BaseUnit, Category, DataStore, Expense, ExpenseInput, ExpenseLine, ExpenseLineInput, Product } from '../types';
 import { DEFAULT_CATEGORIES } from './defaults';
 import { pairKey } from './duplicates';
+import { withClientIds } from './cloudRows';
 
 /** Убирает пробелы, переносы строк и кавычки, которые легко захватить при вставке значения в панель хостинга. */
 const clean = (v: unknown) =>
@@ -369,9 +370,10 @@ export function createCloudStore(uid: string): DataStore {
     subscribeProducts: productsFeed.subscribe,
     subscribeLines: linesFeed.subscribe,
     async addExpenses(items) {
-      const { data } = check(await sb.from('expenses').insert(items.map(toExpenseRow)).select('id'));
-      const ids = (data ?? []).map((r) => r.id as string);
-      const rows = items.flatMap((it, i) => (it.lines ?? []).map((l, pos) => ({ ...toLineRow(l, pos), expense_id: ids[i] })));
+      const { expenses: withIds, lines: linked } = withClientIds(items);
+      const ids = withIds.map((e) => e.id);
+      check(await sb.from('expenses').insert(withIds.map(({ id, ...it }) => ({ id, ...toExpenseRow(it) }))));
+      const rows = linked.map(({ expenseId, line }) => ({ ...toLineRow(line, line.position), expense_id: expenseId }));
       if (rows.length) {
         const res = await sb.from('expense_items').insert(rows);
         if (res.error) {

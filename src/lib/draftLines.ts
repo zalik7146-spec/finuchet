@@ -21,13 +21,31 @@ export function lineUnitPrice(l: DraftLine): number | null {
   return Math.round((total / qty) * 10_000) / 10_000;
 }
 
+/** Ошибки, без исправления которых позицию не сохранить. Нерешённая привязка к товару сюда не входит — см. lineWarning. */
 export function validateLine(l: DraftLine): string | null {
   if (!l.rawName.trim()) return 'Укажите название позиции';
   if (!(parseAmount(l.lineTotal) >= 0)) return 'Укажите сумму позиции';
-  if (l.notGoods) return null;
-  if (!l.productId && !l.newProduct?.name.trim()) return 'Выберите товар или отметьте «Не товар»';
-  if (parseQuantity(l.baseQuantity) === null) return 'Укажите количество в единицах товара';
   return null;
+}
+
+/** Предупреждение: позиция сохранится, но не попадёт в сравнение цен. */
+export function lineWarning(l: DraftLine): string | null {
+  if (l.notGoods) return null;
+  if (!l.productId && !l.newProduct?.name.trim()) return 'Не привязана к товару — не попадёт в сравнение цен';
+  if (parseQuantity(l.baseQuantity) === null) return 'Нет количества — цена за единицу не посчитается';
+  return null;
+}
+
+/**
+ * Позиции для сохранения черновика. У уже сохранённого расхода, позиции которого не трогали, — undefined:
+ * хранилище тогда не перезаписывает позиции (иначе правка даты могла бы стереть их).
+ */
+export function linesForSave(
+  d: { id?: string; linesDirty?: boolean; lines: DraftLine[] },
+  idByName: Map<string, string>,
+): ExpenseLineInput[] | undefined {
+  if (d.id && !d.linesDirty) return undefined;
+  return draftLinesToInput(d.lines, idByName);
 }
 
 /** Новые товары из всех черновиков пакета: без повторов (без учёта регистра) и без тех, что уже есть в справочнике. */

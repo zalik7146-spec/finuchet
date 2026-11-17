@@ -1,7 +1,7 @@
 import { useId, type ReactNode } from 'react';
 import { BASE_UNITS, type BaseUnit, type DraftLine, type Product } from '../types';
 import { emptyLine } from '../lib/extract';
-import { lineUnitPrice, validateLine } from '../lib/draftLines';
+import { lineUnitPrice, lineWarning, validateLine } from '../lib/draftLines';
 import { formatRub, parseAmount } from '../lib/format';
 
 const key = (s: string) => s.trim().toLowerCase();
@@ -71,6 +71,7 @@ export function LinesEditor({
                 const unit: BaseUnit | null = product?.unit ?? l.newProduct?.unit ?? null;
                 const price = l.notGoods ? null : lineUnitPrice(l);
                 const error = showErrors ? validateLine(l) : null;
+                const warning = lineWarning(l);
                 const hint = renderHint?.(l, product);
                 return (
                   <tr key={l.key} className="border-b border-line align-top last:border-b-0">
@@ -88,6 +89,7 @@ export function LinesEditor({
                         </div>
                       )}
                       {error && <div className="mt-1 text-xs text-bad">{error}</div>}
+                      {!error && warning && <div className="mt-1 text-xs text-warn">{warning}</div>}
                       {hint}
                     </td>
                     <td className="px-2.5 py-2">
@@ -105,7 +107,6 @@ export function LinesEditor({
                             list={listId}
                             placeholder="Найти или ввести новый"
                             aria-label="Товар из справочника"
-                            data-state={error === 'Выберите товар или отметьте «Не товар»' ? 'bad' : undefined}
                             value={product?.name ?? l.newProduct?.name ?? ''}
                             onChange={(e) => setProductText(l, e.target.value)}
                           />
