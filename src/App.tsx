@@ -3,7 +3,7 @@ import type { AppUser, Category, DataStore, Draft, DraftLine, Expense, ExpenseIn
 import { NoAccessError, cloudEnabled, configError, createCloudStore, describeError, getAccessToken, signOut, watchAuth } from './lib/supabase';
 import { createLocalStore } from './lib/localStore';
 import { emptyDraft, extractExpenses, newKey } from './lib/extract';
-import { applyFilter, periodLabel, recentFirst } from './lib/filters';
+import { applyFilter, periodLabel, periodRange, recentFirst } from './lib/filters';
 import { amountToInput, isValidIsoDate, parseAmount } from './lib/format';
 import { Capture } from './components/Capture';
 import { Categories } from './components/Categories';
@@ -11,7 +11,9 @@ import { Dashboard } from './components/Dashboard';
 import { Duplicates } from './components/Duplicates';
 import { findDuplicatePairs } from './lib/duplicates';
 import { aliasUpdates, draftLinesToInput, lineToDraft, lineUnitPrice, newProductsToCreate } from './lib/draftLines';
-import { priceInsight, pricePoints } from './lib/prices';
+import { priceInsight, pricePoints, productSummaries } from './lib/prices';
+import { ProductCard } from './components/ProductCard';
+import { Products } from './components/Products';
 import { ExpenseView } from './components/ExpenseView';
 import { PriceHint } from './components/PriceHint';
 import { FilterBar } from './components/FilterBar';
@@ -128,6 +130,14 @@ export default function App() {
   const duplicatePairs = useMemo(() => findDuplicatePairs(expenses, dismissals), [expenses, dismissals]);
   const points = useMemo(() => pricePoints(lines, expenses), [lines, expenses]);
   const [viewingId, setViewingId] = useState<string | null>(null);
+  const [purchasesTab, setPurchasesTab] = useState<'awaiting' | 'products'>('awaiting');
+  const [productsSort, setProductsSort] = useState<'name' | 'change' | 'total'>('name');
+  const [openProductId, setOpenProductId] = useState<string | null>(null);
+  const openProduct = openProductId ? products.find((p) => p.id === openProductId) : undefined;
+  const summaries = useMemo(() => {
+    const { from, to } = periodRange(filter);
+    return productSummaries(products, points, lines, expenses, from, to);
+  }, [products, points, lines, expenses, filter]);
   const viewing = viewingId ? expenses.find((e) => e.id === viewingId) : undefined;
 
   /** «В прошлый раз дешевле»: сравнение строки черновика с прошлыми закупками того же товара. */
@@ -398,7 +408,34 @@ export default function App() {
           )}
 
           {view === 'purchases' ? (
-            <Purchases expenses={expenses} onReceived={(e) => toggleReceived(e.id, true)} />
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex rounded-md border border-line bg-white p-0.5" role="tablist" aria-label="Закупки">
+                  {(
+                    [
+                      ['awaiting', 'Ожидают получения'],
+                      ['products', 'Товары'],
+                    ] as const
+                  ).map(([id, label]) => (
+                    <button
+                      key={id}
+                      role="tab"
+                      aria-selected={purchasesTab === id}
+                      onClick={() => setPurchasesTab(id)}
+                      className={`h-8 rounded px-3 text-[13px] font-semibold ${purchasesTab === id ? 'bg-ink text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {purchasesTab === 'products' && <FilterBar filter={filter} categories={categories} onChange={setFilter} />}
+              </div>
+              {purchasesTab === 'awaiting' ? (
+                <Purchases expenses={expenses} onReceived={(e) => toggleReceived(e.id, true)} />
+              ) : (
+                <Products key={productsSort} summaries={summaries} periodLabel={periodLabel(filter)} initialSort={productsSort} onOpen={setOpenProductId} />
+              )}
+            </>
           ) : view === 'members' ? (
             <Members currentEmail={user.email} onNotify={notify} />
           ) : view === 'categories' ? (
@@ -486,6 +523,19 @@ export default function App() {
         />
       )}
 
+      {openProduct && (
+        <ProductCard
+          key={openProduct.id}
+          product={openProduct}
+          products={products}
+          points={points}
+          onOpenExpense={setViewingId}
+          onSave={(patch) => (store ? run(() => store.updateProduct(openProduct.id, patch), 'Товар сохранён.') : Promise.resolve(false))}
+          onMerge={(intoId) => (store ? run(() => store.mergeProducts(openProduct.id, intoId), 'Товары объединены.') : Promise.resolve(false))}
+          onDelete={() => (store ? run(() => store.deleteProduct(openProduct.id), 'Товар удалён.') : Promise.resolve(false))}
+          onClose={() => setOpenProductId(null)}
+        />
+      )}
       {viewing && <ExpenseView expense={viewing} onClose={() => setViewingId(null)} />}
       <Toasts items={toasts} onDismiss={dismiss} />
     </div>

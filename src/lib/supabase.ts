@@ -118,7 +118,12 @@ export function describeError(e: unknown): string {
   const err = (e ?? {}) as { code?: string; status?: number; message?: string; name?: string };
   const msg = err.message ?? '';
   if (err.code === '42501' || err.code === 'PGRST301') return 'Нет доступа к данным. Войдите в аккаунт заново.';
+  const where = `${msg} ${(e as { details?: string })?.details ?? ''}`;
+  if (err.code === '23503' && where.includes('expense_items_product_id_fkey')) {
+    return 'Товар используется в позициях — объедините его с другим товаром вместо удаления.';
+  }
   if (err.code === '23503') return 'Направление используется в заявках. Сначала перенесите их в другое направление.';
+  if (err.code === '23505' && where.includes('products_name_unique')) return 'Товар с таким названием уже есть.';
   if (err.code === '23505') return 'Такая запись уже существует.';
   if (err.code === '23514' || err.code === '22P02' || err.code === '23502') return 'Данные не прошли проверку. Проверьте заполнение полей.';
   if (err.code === 'over_email_send_rate_limit' || err.status === 429) return 'Слишком много попыток. Подождите минуту и повторите.';

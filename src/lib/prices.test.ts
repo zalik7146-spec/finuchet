@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
-import type { ExpenseLine } from '../types';
-import { priceInsight, pricePoints, type PricePoint } from './prices';
+import type { ExpenseLine, Product } from '../types';
+import { priceInsight, pricePoints, productSummaries, type PricePoint } from './prices';
 import { exp } from './test-helpers';
 
 const line = (over: Partial<ExpenseLine>): ExpenseLine => ({
@@ -74,4 +74,27 @@ test('лучшая за 90 дней не берёт закупки старше 
 
 test('другой товар не участвует', () => {
   expect(priceInsight('sugar', 77, '2026-11-12', [pt({})]).last).toBeNull();
+});
+
+const product = (id: string, name = id): Product => ({ id, name, unit: 'кг', aliases: [], createdAt: 0 });
+
+test('productSummaries: количество и сумма — только в периоде', () => {
+  const expenses = [exp({ id: 'oct', date: '2026-10-10' }), exp({ id: 'nov', date: '2026-11-10' })];
+  const lines = [line({ id: 'a', expenseId: 'oct', baseQuantity: 100, lineTotal: 2600 }), line({ id: 'b', expenseId: 'nov', baseQuantity: 500, lineTotal: 14500 })];
+  const [s] = productSummaries([product('flour')], pricePoints(lines, expenses), lines, expenses, '2026-11-01', '2026-11-30');
+  expect(s.boughtQuantity).toBe(500);
+  expect(s.boughtTotal).toBe(14500);
+});
+
+test('productSummaries: изменение — по двум последним закупкам', () => {
+  const expenses = [exp({ id: 'oct', date: '2026-10-10' }), exp({ id: 'nov', date: '2026-11-10' })];
+  const lines = [line({ id: 'a', expenseId: 'oct', baseQuantity: 100, lineTotal: 2600 }), line({ id: 'b', expenseId: 'nov', baseQuantity: 500, lineTotal: 14500 })];
+  const [s] = productSummaries([product('flour')], pricePoints(lines, expenses), lines, expenses, '', '');
+  expect(s.last?.unitPrice).toBe(29);
+  expect(s.changePct).toBeCloseTo(11.538, 2);
+});
+
+test('productSummaries: товар без закупок', () => {
+  const [s] = productSummaries([product('salt')], [], [], [], '', '');
+  expect(s).toMatchObject({ last: null, changePct: null, boughtQuantity: 0, boughtTotal: 0 });
 });
