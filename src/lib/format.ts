@@ -42,6 +42,7 @@ export const SOURCE_LABEL: Record<SourceType, string> = {
   pdf: 'PDF',
   image: 'Скан',
   text: 'Текст',
+  excel: 'Excel',
   manual: 'Вручную',
 };
 

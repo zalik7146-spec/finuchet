@@ -51,7 +51,7 @@ export function Capture({
         onDrop={onDrop}
       >
         <h2 className="text-sm font-bold">Документ</h2>
-        <p className="text-[13px] text-slate-500">Перетащите сюда счёт или чек · PDF, JPG, PNG, WEBP · до 15 МБ</p>
+        <p className="text-[13px] text-slate-500">Перетащите сюда счёт или чек · PDF, JPG, PNG, WEBP, XLSX · до 15 МБ</p>
         <div className="mt-1 flex flex-wrap items-center gap-3">
           <button className="btn" disabled={busy} onClick={() => input.current?.click()}>
             Выбрать файл
@@ -64,7 +64,7 @@ export function Capture({
           ref={input}
           type="file"
           className="hidden"
-          accept="application/pdf,image/jpeg,image/png,image/webp"
+          accept="application/pdf,image/jpeg,image/png,image/webp,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           onChange={(e) => {
             take(e.target.files?.[0]);
             e.target.value = '';

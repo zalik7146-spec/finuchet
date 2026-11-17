@@ -1,5 +1,5 @@
 export type Confidence = 'high' | 'medium' | 'low';
-export type SourceType = 'pdf' | 'image' | 'text' | 'manual';
+export type SourceType = 'pdf' | 'image' | 'text' | 'excel' | 'manual';
 
 export interface Category {
   id: string;

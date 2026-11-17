@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GoogleGenAI, Type } from '@google/genai';
 import { finalConfidence, type Confidence } from './server/confidence';
+import { xlsxToText } from './server/xlsx';
 
 try {
   process.loadEnvFile();
@@ -28,6 +29,16 @@ const FALLBACK_TIMEOUT_MS = 25_000;
 const TOTAL_BUDGET_MS = 82_000;
 const MIN_ATTEMPT_MS = 8_000; // меньше этого запасной модели давать бессмысленно
 const ALLOWED_MIME = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+/** Некоторые браузеры отдают .xlsx как application/octet-stream — тогда смотрим на расширение. */
+function fileKind(file: Express.Multer.File): 'inline' | 'xlsx' | 'xls' | 'bad' {
+  const name = file.originalname.toLowerCase();
+  const generic = !file.mimetype || file.mimetype === 'application/octet-stream';
+  if (file.mimetype === XLSX_MIME || (generic && name.endsWith('.xlsx'))) return 'xlsx';
+  if (file.mimetype === 'application/vnd.ms-excel' || name.endsWith('.xls')) return 'xls';
+  return ALLOWED_MIME.has(file.mimetype) ? 'inline' : 'bad';
+}
 
 interface CategoryRef {
   id: string;
@@ -66,11 +77,17 @@ function todayIso(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function buildPrompt(categories: CategoryRef[], text: string, hasFile: boolean): string {
+type Source = 'file' | 'xlsx' | 'text';
+
+function buildPrompt(categories: CategoryRef[], text: string, source: Source): string {
+  const what =
+    source === 'file'
+      ? 'приложенного документа (счёт, чек, накладная)'
+      : source === 'xlsx'
+        ? 'Excel-счёта, приведённого ниже как текст (строки таблицы, ячейки через табуляцию)'
+        : 'текстовой заметки';
   return [
-    'Ты — помощник бухгалтера. Извлеки бизнес-расходы из ' +
-      (hasFile ? 'приложенного документа (счёт, чек, накладная)' : 'текстовой заметки') +
-      '.',
+    `Ты — помощник бухгалтера. Извлеки бизнес-расходы из ${what}.`,
     'Правила:',
     '- Каждый отдельный документ, чек или платёж — отдельный элемент items. Один счёт с несколькими позициями — это один расход с итоговой суммой к оплате (с НДС), позиции перечисли в description.',
     '- amount — итоговая сумма в российских рублях, число больше нуля, с копейками.',
@@ -84,7 +101,7 @@ function buildPrompt(categories: CategoryRef[], text: string, hasFile: boolean):
     '',
     'Направления расходов:',
     ...categories.map((c) => `- id: ${c.id} — ${c.name}`),
-    ...(text ? ['', 'Текст пользователя:', text] : []),
+    ...(text ? ['', source === 'xlsx' ? 'Содержимое Excel-счёта:' : 'Текст пользователя:', text] : []),
   ].join('\n');
 }
 
@@ -156,12 +173,20 @@ async function requireMember(req: Request, _res: Response, next: NextFunction) {
 app.post('/api/expenses/extract', requireMember, upload.single('file'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const file = req.file;
-    const text = typeof req.body?.text === 'string' ? req.body.text.trim().slice(0, 20_000) : '';
+    let text = typeof req.body?.text === 'string' ? req.body.text.trim().slice(0, 20_000) : '';
     const categories = parseCategories(req.body?.categories);
 
     if (!file && !text) throw new HttpError(400, 'empty', 'Загрузите файл или введите текст расхода.');
-    if (file && !ALLOWED_MIME.has(file.mimetype)) {
-      throw new HttpError(415, 'bad_type', 'Поддерживаются только PDF, JPG, PNG и WEBP.');
+    const kind = file ? fileKind(file) : null;
+    if (kind === 'xls') throw new HttpError(415, 'old_excel', 'Старый формат .xls не поддерживается. Сохраните файл как .xlsx и загрузите снова.');
+    if (kind === 'bad') throw new HttpError(415, 'bad_type', 'Поддерживаются только PDF, JPG, PNG, WEBP и XLSX.');
+    if (file && kind === 'xlsx') {
+      try {
+        text = await xlsxToText(file.buffer);
+      } catch (err) {
+        if ((err as Error).message === 'empty') throw new HttpError(400, 'empty_excel', 'В таблице нет данных.');
+        throw new HttpError(400, 'bad_excel', 'Не удалось прочитать Excel-файл. Проверьте, что он открывается в Excel.');
+      }
     }
     if (!categories.length) throw new HttpError(400, 'no_categories', 'Не передан список направлений расходов.');
 
@@ -176,8 +201,8 @@ app.post('/api/expenses/extract', requireMember, upload.single('file'), async (r
 
     const ai = new GoogleGenAI({ apiKey });
     const parts: Array<Record<string, unknown>> = [];
-    if (file) parts.push({ inlineData: { mimeType: file.mimetype, data: file.buffer.toString('base64') } });
-    parts.push({ text: buildPrompt(categories, text, !!file) });
+    if (file && kind === 'inline') parts.push({ inlineData: { mimeType: file.mimetype, data: file.buffer.toString('base64') } });
+    parts.push({ text: buildPrompt(categories, text, kind === 'inline' ? 'file' : kind === 'xlsx' ? 'xlsx' : 'text') });
 
     const responseSchema = {
       type: Type.OBJECT,

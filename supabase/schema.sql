@@ -30,7 +30,7 @@ create table public.expenses (
   vendor text not null check (char_length(vendor) between 1 and 120),
   description text not null default '' check (char_length(description) <= 500),
   document_number text not null default '' check (char_length(document_number) <= 60),
-  source_type text not null check (source_type in ('pdf', 'image', 'text', 'manual')),
+  source_type text not null check (source_type in ('pdf', 'image', 'text', 'excel', 'manual')),
   source_file_name text not null default '' check (char_length(source_file_name) <= 200),
   ai_confidence text not null check (ai_confidence in ('high', 'medium', 'low')),
   is_purchase boolean not null default false,

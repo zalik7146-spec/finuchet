@@ -2,10 +2,15 @@ import type { Category, Confidence, Draft, SourceType } from '../types';
 import { amountToInput, todayIso } from './format';
 
 export const MAX_FILE_BYTES = 15 * 1024 * 1024;
-export const ACCEPTED_MIME = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+export const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+export const ACCEPTED_MIME = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp', XLSX_MIME];
+
+/** .xlsx иногда приходит без MIME-типа — узнаём по расширению. */
+export const isXlsx = (file: File) => file.type === XLSX_MIME || /\.xlsx$/i.test(file.name);
 
 export function validateFile(file: File): string | null {
-  if (!ACCEPTED_MIME.includes(file.type)) return 'Неподдерживаемый формат. Загрузите PDF, JPG, PNG или WEBP.';
+  if (/\.xls$/i.test(file.name)) return 'Старый формат .xls не поддерживается. Сохраните файл как .xlsx.';
+  if (!ACCEPTED_MIME.includes(file.type) && !isXlsx(file)) return 'Неподдерживаемый формат. Загрузите PDF, JPG, PNG, WEBP или XLSX.';
   if (file.size > MAX_FILE_BYTES) return 'Файл больше 15 МБ.';
   if (file.size === 0) return 'Файл пустой.';
   return null;
@@ -77,7 +82,7 @@ export async function extractExpenses(
   }
   if (!res.ok) throw new Error(data.message || `Ошибка распознавания (код ${res.status}).`);
 
-  const sourceType: SourceType = input.file ? (input.file.type === 'application/pdf' ? 'pdf' : 'image') : 'text';
+  const sourceType: SourceType = !input.file ? 'text' : isXlsx(input.file) ? 'excel' : input.file.type === 'application/pdf' ? 'pdf' : 'image';
   return (data.items ?? []).map((it) => ({
     key: newKey(),
     date: it.date,
