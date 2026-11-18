@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import type { Category, Draft, DraftLine, Expense, Product } from '../types';
+import { SourcePreview } from './SourcePreview';
 import { validateLine } from '../lib/draftLines';
 import { LinesEditor } from './LinesEditor';
 import { findMatchesFor, isDuplicate, type DupFields } from '../lib/duplicates';
@@ -48,6 +49,7 @@ export function ReviewSkeleton({ onClose, source }: { onClose: () => void; sourc
 export function ReviewDialog({
   mode,
   initial,
+  sourceFile,
   categories,
   products,
   renderLineHint,
@@ -59,6 +61,7 @@ export function ReviewDialog({
 }: {
   mode: 'new' | 'edit';
   initial: Draft[];
+  sourceFile?: File;
   categories: Category[];
   products: Product[];
   /** Подсказка под позицией (сравнение цен). */
@@ -131,7 +134,7 @@ export function ReviewDialog({
       title={title}
       subtitle={subtitle}
       onClose={onClose}
-      width="max-w-[1280px]"
+      width={sourceFile ? 'max-w-[1640px]' : 'max-w-[1280px]'}
       footer={
         <>
           <span className="mr-auto text-sm text-slate-500">
@@ -147,165 +150,172 @@ export function ReviewDialog({
         </>
       }
     >
-      {drafts.length === 0 && (
-        <div className="px-5 py-10 text-center">
-          <p className="text-sm font-semibold">Расходы не найдены</p>
-          <p className="mt-1 text-sm text-slate-500">ИИ не нашёл в документе сумм к оплате. Добавьте позицию вручную.</p>
-        </div>
-      )}
-
-      {drafts.map((d, i) => {
-        const err = showErrors ? errors[i] : {};
-        const unsure = d.sourceType !== 'manual' && d.aiConfidence !== 'high';
-        const fields = dupFields(d);
-        const savedMatches = fields ? findMatchesFor(fields, expenses, d.id) : [];
-        const batchMatch = fields
-          ? drafts.findIndex((other, j) => j < i && (() => { const o = dupFields(other); return !!o && isDuplicate(fields, o); })())
-          : -1;
-        const state = (bad?: string, warnable = false) => (bad ? 'bad' : warnable && unsure ? 'warn' : undefined);
-        return (
-          <section key={d.key} className="border-b border-line px-5 py-5 last:border-b-0">
-            <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[13px] text-slate-500">
-              {drafts.length > 1 && <span className="font-semibold text-ink">Расход {i + 1} из {drafts.length}</span>}
-              <span className="min-w-0 truncate">
-                {SOURCE_LABEL[d.sourceType]}
-                {displayFileName(d.sourceFileName) && ` · ${displayFileName(d.sourceFileName)}`}
-                {d.sourceType !== 'manual' && (
-                  <>
-                    {' · уверенность ИИ: '}
-                    <span className={d.aiConfidence === 'high' ? 'font-semibold text-ok' : d.aiConfidence === 'medium' ? 'font-semibold text-warn' : 'font-semibold text-bad'}>
-                      {CONFIDENCE_LABEL[d.aiConfidence]}
-                    </span>
-                  </>
-                )}
-              </span>
-              {mode === 'new' && (
-                <span className="ml-auto flex gap-4">
-                  <button className="link" onClick={() => split(d)}>
-                    Разбить
-                  </button>
-                  <button className="link link-danger" onClick={() => remove(d.key)}>
-                    Удалить расход
-                  </button>
-                </span>
-              )}
+      <div className={sourceFile ? 'lg:grid lg:grid-cols-[minmax(270px,1fr)_minmax(0,2.5fr)]' : ''}>
+        {sourceFile && <SourcePreview file={sourceFile} />}
+        <div className="min-w-0">
+          {drafts.length === 0 && (
+            <div className="px-5 py-10 text-center">
+              <p className="text-sm font-semibold">Расходы не найдены</p>
+              <p className="mt-1 text-sm text-slate-500">ИИ не нашёл в документе сумм к оплате. Добавьте позицию вручную.</p>
             </div>
+          )}
 
-            {(savedMatches.length > 0 || batchMatch >= 0) && (
-              <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[13px]" role="note">
-                {savedMatches.map((m) => (
-                  <div key={m.id} className="flex flex-wrap items-baseline gap-x-3">
-                    <span className="font-semibold text-warn">Похоже, это уже есть:</span>
-                    <span className="min-w-0 text-slate-700">
-                      {m.vendor} · <span className="num">{formatRub(m.amount)}</span> · <span className="num">{formatDate(m.date)}</span>
-                      {m.documentNumber && (
-                        <>
-                          {' '}
-                          · № <span className="num">{m.documentNumber}</span>
-                        </>
-                      )}
+          {drafts.map((d, i) => {
+            const err = showErrors ? errors[i] : {};
+            const unsure = d.sourceType !== 'manual' && d.aiConfidence !== 'high';
+            const fields = dupFields(d);
+            const savedMatches = fields ? findMatchesFor(fields, expenses, d.id) : [];
+            const batchMatch = fields
+              ? drafts.findIndex((other, j) => j < i && (() => { const o = dupFields(other); return !!o && isDuplicate(fields, o); })())
+              : -1;
+            const state = (bad?: string, warnable = false) => (bad ? 'bad' : warnable && unsure ? 'warn' : undefined);
+            return (
+              <section key={d.key} className="border-b border-line px-5 py-5 last:border-b-0">
+                <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[13px] text-slate-500">
+                  {drafts.length > 1 && <span className="font-semibold text-ink">Расход {i + 1} из {drafts.length}</span>}
+                  <span className="min-w-0 truncate">
+                    {SOURCE_LABEL[d.sourceType]}
+                    {displayFileName(d.sourceFileName) && ` · ${displayFileName(d.sourceFileName)}`}
+                    {d.sourceType !== 'manual' && (
+                      <>
+                        {' · уверенность ИИ: '}
+                        <span className={d.aiConfidence === 'high' ? 'font-semibold text-ok' : d.aiConfidence === 'medium' ? 'font-semibold text-warn' : 'font-semibold text-bad'}>
+                          {CONFIDENCE_LABEL[d.aiConfidence]}
+                        </span>
+                      </>
+                    )}
+                  </span>
+                  {mode === 'new' && (
+                    <span className="ml-auto flex gap-4">
+                      <button className="link" onClick={() => split(d)}>
+                        Разбить
+                      </button>
+                      <button className="link link-danger" onClick={() => remove(d.key)}>
+                        Удалить расход
+                      </button>
                     </span>
-                    <button className="link" onClick={() => setViewing(m)}>
-                      Открыть и сравнить
-                    </button>
-                  </div>
-                ))}
-                {batchMatch >= 0 && (
-                  <div>
-                    <span className="font-semibold text-warn">Совпадает с расходом {batchMatch + 1}</span>
-                    <span className="text-slate-700"> в этом же документе — проверьте, не задвоился ли он.</span>
+                  )}
+                </div>
+
+                {(savedMatches.length > 0 || batchMatch >= 0) && (
+                  <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[13px]" role="note">
+                    {savedMatches.map((m) => (
+                      <div key={m.id} className="flex flex-wrap items-baseline gap-x-3">
+                        <span className="font-semibold text-warn">Похоже, это уже есть:</span>
+                        <span className="min-w-0 text-slate-700">
+                          {m.vendor} · <span className="num">{formatRub(m.amount)}</span> · <span className="num">{formatDate(m.date)}</span>
+                          {m.documentNumber && (
+                            <>
+                              {' '}
+                              · № <span className="num">{m.documentNumber}</span>
+                            </>
+                          )}
+                        </span>
+                        <button className="link" onClick={() => setViewing(m)}>
+                          Открыть и сравнить
+                        </button>
+                      </div>
+                    ))}
+                    {batchMatch >= 0 && (
+                      <div>
+                        <span className="font-semibold text-warn">Совпадает с расходом {batchMatch + 1}</span>
+                        <span className="text-slate-700"> в этом же документе — проверьте, не задвоился ли он.</span>
+                      </div>
+                    )}
                   </div>
                 )}
-              </div>
-            )}
 
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3 lg:grid-cols-12">
-              <Label text="Контрагент" className="col-span-2 lg:col-span-4">
-                <input className="field" data-state={state(err.vendor)} value={d.vendor} maxLength={120} onChange={(e) => patch(d.key, { vendor: e.target.value })} />
-                {err.vendor && <span className="mt-1 block text-xs text-bad">{err.vendor}</span>}
-              </Label>
-              <Label text="Направление" className="col-span-2 lg:col-span-3">
-                <select className="field" data-state={state(err.categoryId)} value={d.categoryId} onChange={(e) => patch(d.key, { categoryId: e.target.value })}>
-                  {!categories.some((c) => c.id === d.categoryId) && <option value="">— выберите —</option>}
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-                {err.categoryId && <span className="mt-1 block text-xs text-bad">{err.categoryId}</span>}
-              </Label>
-              <Label text="Дата" className="lg:col-span-2">
-                <input type="date" className="field num" data-state={state(err.date, true)} value={d.date} onChange={(e) => patch(d.key, { date: e.target.value })} />
-                {err.date && <span className="mt-1 block text-xs text-bad">{err.date}</span>}
-              </Label>
-              <Label text="№ документа" className="lg:col-span-1">
-                <input className="field num" value={d.documentNumber} maxLength={60} onChange={(e) => patch(d.key, { documentNumber: e.target.value })} />
-              </Label>
-              <Label text="Сумма, ₽" className="col-span-2 lg:col-span-2">
-                <input
-                  className="field num text-right font-semibold"
-                  inputMode="decimal"
-                  placeholder="0,00"
-                  data-state={state(err.amount, true)}
-                  value={d.amount}
-                  onChange={(e) => patch(d.key, { amount: e.target.value })}
+                <div className="grid grid-cols-2 gap-x-4 gap-y-3 lg:grid-cols-12">
+                  <Label text="Контрагент" className="col-span-2 lg:col-span-4">
+                    <input className="field" data-state={state(err.vendor)} value={d.vendor} maxLength={120} onChange={(e) => patch(d.key, { vendor: e.target.value })} />
+                    {err.vendor && <span className="mt-1 block text-xs text-bad">{err.vendor}</span>}
+                  </Label>
+                  <Label text="Направление" className="col-span-2 lg:col-span-3">
+                    <select className="field" data-state={state(err.categoryId)} value={d.categoryId} onChange={(e) => patch(d.key, { categoryId: e.target.value })}>
+                      {!categories.some((c) => c.id === d.categoryId) && <option value="">— выберите —</option>}
+                      {categories.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                    {err.categoryId && <span className="mt-1 block text-xs text-bad">{err.categoryId}</span>}
+                  </Label>
+                  <Label text="Дата" className="lg:col-span-2">
+                    <input type="date" className="field num" data-state={state(err.date, true)} value={d.date} onChange={(e) => patch(d.key, { date: e.target.value })} />
+                    {err.date && <span className="mt-1 block text-xs text-bad">{err.date}</span>}
+                  </Label>
+                  <Label text="№ документа" className="lg:col-span-1">
+                    <input className="field num" value={d.documentNumber} maxLength={60} onChange={(e) => patch(d.key, { documentNumber: e.target.value })} />
+                  </Label>
+                  <Label text="Сумма, ₽" className="col-span-2 lg:col-span-2">
+                    <input
+                      className="field num text-right font-semibold"
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      data-state={state(err.amount, true)}
+                      id={`${d.key}-amount`}
+                      value={d.amount}
+                      onChange={(e) => patch(d.key, { amount: e.target.value })}
+                    />
+                    {err.amount && <span className="mt-1 block text-xs text-bad">{err.amount}</span>}
+                  </Label>
+                  <Label text="Назначение" className="col-span-2 lg:col-span-12">
+                    <input className="field" maxLength={500} value={d.description} onChange={(e) => patch(d.key, { description: e.target.value })} />
+                  </Label>
+                </div>
+
+                <LinesEditor
+                  lines={d.lines}
+                  products={products}
+                  amount={parseAmount(d.amount) || 0}
+                  amountFieldId={`${d.key}-amount`}
+                  showErrors={showErrors}
+                  onChange={(lines) => setLines(d, lines)}
+                  renderHint={renderLineHint ? (line, product) => renderLineHint(d, line, product) : undefined}
+                  countPriceRises={countPriceRises ? (lines) => countPriceRises(d, lines) : undefined}
                 />
-                {err.amount && <span className="mt-1 block text-xs text-bad">{err.amount}</span>}
-              </Label>
-              <Label text="Назначение" className="col-span-2 lg:col-span-12">
-                <input className="field" maxLength={500} value={d.description} onChange={(e) => patch(d.key, { description: e.target.value })} />
-              </Label>
+
+                <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input type="checkbox" className="h-4 w-4 accent-[#2563EB]" checked={d.isPurchase} onChange={(e) => patch(d.key, { isPurchase: e.target.checked, purchaseTouched: true })} />
+                    Покупка товара
+                  </label>
+                  {(() => {
+                    const saved = d.id ? expenses.find((x) => x.id === d.id) : undefined;
+                    if (!saved?.isPurchase || !onToggleReceived) return d.isPurchase ? <span className="text-[13px] text-slate-500">после сохранения — «Ожидает получения»</span> : null;
+                    return saved.receivedAt ? (
+                      <span className="text-[13px]">
+                        <span className="font-semibold text-ok">Получено</span>{' '}
+                        <span className="num text-slate-600">{new Date(saved.receivedAt).toLocaleDateString('ru-RU')}</span>
+                        {saved.receivedByEmail && <span className="text-slate-500"> · {saved.receivedByEmail}</span>}{' '}
+                        <button className="link ml-2" onClick={() => onToggleReceived(saved.id, false)}>
+                          Снять отметку
+                        </button>
+                      </span>
+                    ) : (
+                      <span className="text-[13px]">
+                        <span className="font-semibold text-warn">Ожидает получения</span>{' '}
+                        <button className="link ml-2" onClick={() => onToggleReceived(saved.id, true)}>
+                          Отметить «Получено»
+                        </button>
+                      </span>
+                    );
+                  })()}
+                </div>
+              </section>
+            );
+          })}
+
+          {mode === 'new' && (
+            <div className="border-t border-line px-5 py-3">
+              <button className="link" onClick={add} disabled={!categories.length}>
+                + Добавить расход вручную
+              </button>
             </div>
-
-            <LinesEditor
-              lines={d.lines}
-              products={products}
-              amount={parseAmount(d.amount) || 0}
-              showErrors={showErrors}
-              onChange={(lines) => setLines(d, lines)}
-              renderHint={renderLineHint ? (line, product) => renderLineHint(d, line, product) : undefined}
-              countPriceRises={countPriceRises ? (lines) => countPriceRises(d, lines) : undefined}
-            />
-
-            <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-              <label className="flex cursor-pointer items-center gap-2">
-                <input type="checkbox" className="h-4 w-4 accent-[#2563EB]" checked={d.isPurchase} onChange={(e) => patch(d.key, { isPurchase: e.target.checked, purchaseTouched: true })} />
-                Покупка товара
-              </label>
-              {(() => {
-                const saved = d.id ? expenses.find((x) => x.id === d.id) : undefined;
-                if (!saved?.isPurchase || !onToggleReceived) return d.isPurchase ? <span className="text-[13px] text-slate-500">после сохранения — «Ожидает получения»</span> : null;
-                return saved.receivedAt ? (
-                  <span className="text-[13px]">
-                    <span className="font-semibold text-ok">Получено</span>{' '}
-                    <span className="num text-slate-600">{new Date(saved.receivedAt).toLocaleDateString('ru-RU')}</span>
-                    {saved.receivedByEmail && <span className="text-slate-500"> · {saved.receivedByEmail}</span>}{' '}
-                    <button className="link ml-2" onClick={() => onToggleReceived(saved.id, false)}>
-                      Снять отметку
-                    </button>
-                  </span>
-                ) : (
-                  <span className="text-[13px]">
-                    <span className="font-semibold text-warn">Ожидает получения</span>{' '}
-                    <button className="link ml-2" onClick={() => onToggleReceived(saved.id, true)}>
-                      Отметить «Получено»
-                    </button>
-                  </span>
-                );
-              })()}
-            </div>
-          </section>
-        );
-      })}
-
-      {mode === 'new' && (
-        <div className="border-t border-line px-5 py-3">
-          <button className="link" onClick={add} disabled={!categories.length}>
-            + Добавить расход вручную
-          </button>
+          )}
         </div>
-      )}
+      </div>
       {viewing && <ExpenseView expense={viewing} onClose={() => setViewing(null)} />}
     </Modal>
   );

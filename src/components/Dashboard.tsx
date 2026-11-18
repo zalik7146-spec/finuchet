@@ -1,11 +1,12 @@
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { IconPie, IconTrendUp, IconTruck, IconWallet } from './icons';
 import type { Category, Expense, Filter } from '../types';
 import { sumAmounts, timelineByCategory, totalsByCategory, totalsByVendor } from '../lib/filters';
-import type { ProductSummary } from '../lib/prices';
-import { formatBucket, formatRub, formatRubShort } from '../lib/format';
+import type { PriceImpact } from '../lib/prices';
+import { formatBucket, formatDate, formatRub, formatRubShort } from '../lib/format';
 
+const signedRub = (n: number) => `${n > 0 ? '+' : ''}${formatRub(n)}`;
 const pctText = (n: number) => `${n > 0 ? '+' : ''}${n.toLocaleString('ru-RU', { maximumFractionDigits: 1 })}%`;
 
 /** Бейдж изменения к прошлому периоду: рост расходов — нейтральный, это не обязательно плохо. */
@@ -82,10 +83,10 @@ export function Dashboard({
   categories,
   filter,
   awaiting,
-  summaries,
+  impacts,
   onToggleCategory,
   onOpenAwaiting,
-  onOpenPriceGrowth,
+  onOpenDocument,
   onOpenProduct,
   recent,
 }: {
@@ -99,10 +100,10 @@ export function Dashboard({
   filter: Filter;
   awaiting: { count: number; total: number };
   /** Сводка по товарам за текущий период. */
-  summaries: ProductSummary[];
+  impacts: PriceImpact[];
   onToggleCategory: (id: string) => void;
   onOpenAwaiting: () => void;
-  onOpenPriceGrowth: () => void;
+  onOpenDocument: (id: string) => void;
   onOpenProduct: (productId: string) => void;
 }) {
   const total = useMemo(() => sumAmounts(expenses), [expenses]);
@@ -110,10 +111,11 @@ export function Dashboard({
   const byVendor = useMemo(() => totalsByVendor(expenses, 10), [expenses]);
   const { buckets, granularity } = useMemo(() => timelineByCategory(expenses, filter), [expenses, filter]);
   const chart = useMemo(() => buckets.map((b) => ({ ...b, label: formatBucket(b.key) })), [buckets]);
-  const risen = useMemo(
-    () => summaries.filter((s) => s.boughtTotal > 0 && s.changePct !== null && s.changePct > 1).sort((a, b) => b.changePct! - a.changePct!),
-    [summaries],
-  );
+  const [expanded, setExpanded] = useState(false);
+  const report = useRef<HTMLHeadingElement>(null);
+  const changes = impacts.filter((row) => row.amount !== 0);
+  const totalImpact = changes.reduce((sum, row) => sum + Math.round(row.amount * 100), 0) / 100;
+  const increases = changes.reduce((sum, row) => sum + Math.max(0, Math.round(row.amount * 100)), 0) / 100;
   const catById = new Map(categories.map((c) => [c.id, c]));
   const stackIds = byCat.map((c) => c.id);
   const count = expenses.length;
@@ -140,20 +142,15 @@ export function Dashboard({
           icon={<IconTruck />}
           label="Закупки в пути"
           value={formatRub(awaiting.total)}
-          hint={awaiting.count ? `${awaiting.count} ожидают получения` : 'всё получено'}
+          hint={`На сегодня · ${awaiting.count ? `${awaiting.count} ожидают получения` : 'всё получено'}`}
           onClick={onOpenAwaiting}
         />
         <Kpi
           icon={<IconTrendUp />}
-          label="Подорожало"
-          value={
-            risen.length === 0
-              ? 'Цены не росли'
-              : `${risen.length} ${risen.length % 10 === 1 && risen.length % 100 !== 11 ? 'товар' : [2, 3, 4].includes(risen.length % 10) && ![12, 13, 14].includes(risen.length % 100) ? 'товара' : 'товаров'}`
-          }
-          hint={risen.length ? `сильнее всего: ${risen[0].product.name} +${risen[0].changePct!.toLocaleString('ru-RU', { maximumFractionDigits: 1 })}%` : 'к предыдущей закупке'}
-          mono={false}
-          onClick={onOpenPriceGrowth}
+          label="Влияние цен"
+          value={impacts.length ? signedRub(totalImpact) : '—'}
+          hint={impacts.length ? 'К предыдущим закупкам · за период' : 'Нет сопоставимых закупок'}
+          onClick={() => { report.current?.focus(); report.current?.scrollIntoView({ block: 'start' }); }}
         />
         <Kpi
           icon={<IconPie />}
@@ -324,32 +321,39 @@ export function Dashboard({
           )}
         </Panel>
 
-        <Panel title="Рост цен" subtitle="Товары, купленные за период дороже предыдущей закупки">
-          {risen.length === 0 ? (
-            <Empty text={summaries.length ? 'За период цены не росли' : 'Появится, когда в счетах будут позиции с товарами'} />
+        <section className="card min-w-0 p-4">
+          <h2 className="scroll-mt-20 text-sm font-bold" tabIndex={-1} ref={report}>Влияние изменения цен</h2>
+          <p className="text-xs text-slate-500">Разница в цене за единицу × количество в текущей закупке. Сверху — самые крупные изменения в рублях.</p>
+          {changes.length > 0 && <p className="mt-2 text-[13px]">
+            Рост затрат <strong>{formatRub(increases)}</strong> · Снижение <strong>{formatRub(increases - totalImpact)}</strong>
+          </p>}
+          {changes.length === 0 ? (
+            <Empty text={impacts.length ? 'В сопоставимых закупках цены не изменились' : 'Для сравнения нужна закупка того же товара за более раннюю дату'} />
           ) : (
-            <ul className="mt-3 flex flex-col">
-              {risen.slice(0, 5).map((s) => (
-                <li key={s.product.id}>
-                  <button className="flex w-full items-baseline justify-between gap-3 rounded px-2 py-2 text-left text-sm hover:bg-slate-50" onClick={() => onOpenProduct(s.product.id)}>
-                    <span className="min-w-0 truncate font-medium">{s.product.name}</span>
-                    <span className="num shrink-0 text-[13px] text-slate-600">
-                      {formatRub(s.prev!.unitPrice)} → {formatRub(s.last!.unitPrice)}/{s.product.unit}{' '}
-                      <span className="font-semibold text-warn">{pctText(s.changePct!)}</span>
-                    </span>
-                  </button>
+            <ul className="mt-3 divide-y divide-line">
+              {(expanded ? changes : changes.slice(0, 5)).map(({ product, current, previous, amount, percent }) => (
+                <li key={JSON.stringify([current.expenseId, product.id])} className="space-y-1 py-2.5 text-[13px]">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <button className="link text-left" onClick={() => onOpenProduct(product.id)}>{product.name}</button>
+                    <span className={`num shrink-0 font-semibold ${amount > 0 ? 'text-warn' : 'text-ok'}`}>{signedRub(amount)}</span>
+                  </div>
+                  <p>{formatRub(previous.unitPrice)} → {formatRub(current.unitPrice)}/{product.unit}
+                    {percent !== null && ` (${pctText(percent)})`} · {current.quantity.toLocaleString('ru-RU')} {product.unit}</p>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                    {[previous, current].map((p, i) => (
+                      <button key={p.expenseId} className="link text-left" onClick={() => onOpenDocument(p.expenseId)}>
+                        {i ? 'Текущий' : 'Предыдущий'} · {p.documentNumber && `№ ${p.documentNumber} · `}{formatDate(p.date)} · {p.vendor}
+                      </button>
+                    ))}
+                  </div>
                 </li>
               ))}
-              {risen.length > 5 && (
-                <li className="px-2 pt-1">
-                  <button className="link" onClick={onOpenPriceGrowth}>
-                    Все {risen.length}
-                  </button>
-                </li>
-              )}
             </ul>
           )}
-        </Panel>
+          {changes.length > 5 && <button className="link mt-2" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+            {expanded ? 'Свернуть' : `Все изменения (${changes.length})`}
+          </button>}
+        </section>
       </div>
     </div>
   );

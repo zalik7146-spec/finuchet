@@ -12,7 +12,7 @@ import { IconCalendar, IconCategories, IconLogout, IconMembers, IconOverview, Ic
 import { Duplicates } from './components/Duplicates';
 import { findDuplicatePairs } from './lib/duplicates';
 import { aliasUpdates, lineToDraft, linesForSave, lineUnitPrice, newProductsToCreate } from './lib/draftLines';
-import { priceInsight, pricePoints, productSummaries } from './lib/prices';
+import { priceImpacts, priceInsight, pricePoints, productSummaries } from './lib/prices';
 import { ProductCard } from './components/ProductCard';
 import { Products } from './components/Products';
 import { ExpenseView } from './components/ExpenseView';
@@ -38,7 +38,7 @@ const VIEWS: { id: View; label: string; Icon: (p: SVGProps<SVGSVGElement>) => Re
 
 const DEMO_USER: AppUser = { uid: 'demo', name: 'Демо-режим', email: 'данные хранятся в этом браузере' };
 
-type Review = { state: 'loading'; source: string; token: number } | { state: 'ready'; mode: 'new' | 'edit'; drafts: Draft[] };
+type Review = { state: 'loading'; source: string; token: number } | { state: 'ready'; mode: 'new' | 'edit'; drafts: Draft[]; sourceFile?: File };
 
 export default function App() {
   const [user, setUser] = useState<AppUser | null>(cloudEnabled ? null : DEMO_USER);
@@ -52,6 +52,13 @@ export default function App() {
   const [noAccess, setNoAccess] = useState(false);
   const [view, setView] = useState<View>('dashboard');
   const [navOpen, setNavOpen] = useState(false);
+  const [menuHidden, setMenuHidden] = useState(() => {
+    try { return localStorage.getItem('finuchet-menu-hidden') === 'true'; } catch { return false; }
+  });
+  const toggleDesktopMenu = () => {
+    setMenuHidden(!menuHidden);
+    try { localStorage.setItem('finuchet-menu-hidden', String(!menuHidden)); } catch { /* настройка действует в этой вкладке */ }
+  };
   const [filter, setFilter] = useState<Filter>({ preset: 'thisMonth', from: '', to: '', categoryIds: [], search: '' });
   const [review, setReview] = useState<Review | null>(null);
   const [toDelete, setToDelete] = useState<Expense | null>(null);
@@ -134,7 +141,12 @@ export default function App() {
   const points = useMemo(() => pricePoints(lines, expenses), [lines, expenses]);
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [purchasesTab, setPurchasesTab] = useState<'awaiting' | 'products'>('awaiting');
-  const [productsSort, setProductsSort] = useState<'name' | 'change' | 'total'>('name');
+  const scopedExpenses = useMemo(() => applyFilter(expenses, { ...filter, preset: 'all' }), [expenses, filter]);
+  const scopedPoints = useMemo(() => {
+    const ids = new Set(scopedExpenses.map((e) => e.id));
+    return points.filter((p) => ids.has(p.expenseId));
+  }, [points, scopedExpenses]);
+  const impacts = useMemo(() => priceImpacts(scopedPoints, products, new Set(filteredExpenses.map((e) => e.id))), [scopedPoints, products, filteredExpenses]);
   const [openProductId, setOpenProductId] = useState<string | null>(null);
   const openProduct = openProductId ? products.find((p) => p.id === openProductId) : undefined;
   const previousTotal = useMemo(() => {
@@ -149,8 +161,8 @@ export default function App() {
   }, [expenses]);
   const summaries = useMemo(() => {
     const { from, to } = periodRange(filter);
-    return productSummaries(products, points, lines, expenses, from, to);
-  }, [products, points, lines, expenses, filter]);
+    return productSummaries(products, scopedPoints, lines, scopedExpenses, from, to);
+  }, [products, scopedPoints, lines, scopedExpenses, filter]);
   const viewing = viewingId ? expenses.find((e) => e.id === viewingId) : undefined;
 
   /** «В прошлый раз дешевле»: сравнение строки черновика с прошлыми закупками того же товара. */
@@ -184,7 +196,7 @@ export default function App() {
     try {
       const drafts = await extractExpenses(input, categories, products, await getAccessToken());
       if (extractToken.current !== token) return; // пользователь закрыл окно
-      setReview({ state: 'ready', mode: 'new', drafts });
+      setReview({ state: 'ready', mode: 'new', drafts, sourceFile: input.file });
     } catch (e) {
       if (extractToken.current !== token) return;
       setReview(null);
@@ -370,7 +382,8 @@ export default function App() {
     <div className="flex min-h-full">
       {navOpen && <div className="fixed inset-0 z-30 bg-slate-900/40 lg:hidden" onClick={() => setNavOpen(false)} />}
       <aside
-        className={`fixed inset-y-0 left-0 z-30 flex w-[208px] flex-col border-r border-line bg-white transition-transform lg:translate-x-0 ${navOpen ? 'translate-x-0' : '-translate-x-full'}`}
+        id="site-menu"
+        className={`fixed inset-y-0 left-0 z-30 w-[208px] flex-col border-r border-line bg-white ${navOpen ? 'flex' : 'hidden'} ${menuHidden ? 'lg:hidden' : 'lg:flex'}`}
       >
         <div className="flex h-14 items-center gap-2.5 border-b border-line px-4">
           <Logo />
@@ -422,10 +435,17 @@ export default function App() {
         </div>
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col lg:pl-[208px]">
+      <div className={`flex min-w-0 flex-1 flex-col ${menuHidden ? '' : 'lg:pl-[208px]'}`}>
         <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-line bg-white px-4 sm:px-6">
-          <button className="btn !px-2.5 lg:hidden" onClick={() => setNavOpen(true)} aria-label="Открыть меню">
+          <button className="btn !px-2.5 lg:hidden" onClick={() => setNavOpen(true)} aria-label="Открыть меню" aria-controls="site-menu" aria-expanded={navOpen}>
             ☰
+          </button>
+          <button className="btn !hidden !px-2.5 lg:!inline-flex" onClick={toggleDesktopMenu}
+            aria-controls="site-menu" aria-expanded={!menuHidden} aria-label={menuHidden ? 'Показать боковое меню' : 'Скрыть боковое меню'}
+            title={menuHidden ? 'Показать боковое меню' : 'Скрыть боковое меню'}>
+            <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+              <rect x="2" y="3" width="16" height="14" rx="2" /><path d="M7 3v14" />
+            </svg>
           </button>
           <div className="min-w-0 flex-1 truncate text-sm">
             <span className="hidden text-slate-400 sm:inline">ФинУчет ИИ / </span>
@@ -477,7 +497,7 @@ export default function App() {
               {purchasesTab === 'awaiting' ? (
                 <Purchases expenses={expenses} onReceived={(e) => toggleReceived(e.id, true)} />
               ) : (
-                <Products key={productsSort} summaries={summaries} periodLabel={periodLabel(filter)} initialSort={productsSort} onOpen={setOpenProductId} />
+                <Products summaries={summaries} periodLabel={periodLabel(filter)} onOpen={setOpenProductId} />
               )}
             </>
           ) : view === 'planner' ? (
@@ -519,17 +539,13 @@ export default function App() {
                           categories={categories}
                           filter={filter}
                           awaiting={awaitingTotals}
-                          summaries={summaries}
+                          impacts={impacts}
                           onToggleCategory={toggleCategory}
                           onOpenAwaiting={() => {
                             setPurchasesTab('awaiting');
                             setView('purchases');
                           }}
-                          onOpenPriceGrowth={() => {
-                            setProductsSort('change');
-                            setPurchasesTab('products');
-                            setView('purchases');
-                          }}
+                          onOpenDocument={setViewingId}
                           onOpenProduct={setOpenProductId}
                           recent={<Registry {...registryProps} expenses={recentFirst(filteredExpenses)} limit={8} onShowAll={() => setView('registry')} />}
                         />
@@ -556,7 +572,7 @@ export default function App() {
 
       {review?.state === 'loading' && <ReviewSkeleton source={review.source} onClose={closeReview} />}
       {review?.state === 'ready' && (
-        <ReviewDialog key={review.drafts[0]?.key ?? 'empty'} mode={review.mode} initial={review.drafts} categories={categories} products={products} renderLineHint={renderLineHint} countPriceRises={countPriceRises} expenses={expenses} onToggleReceived={toggleReceived} onSave={saveDrafts} onClose={closeReview} />
+        <ReviewDialog key={review.drafts[0]?.key ?? 'empty'} mode={review.mode} initial={review.drafts} sourceFile={review.sourceFile} categories={categories} products={products} renderLineHint={renderLineHint} countPriceRises={countPriceRises} expenses={expenses} onToggleReceived={toggleReceived} onSave={saveDrafts} onClose={closeReview} />
       )}
 
       {toDelete && (

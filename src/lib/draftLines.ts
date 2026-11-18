@@ -105,3 +105,23 @@ export function lineToDraft(l: ExpenseLine): DraftLine {
     lineTotal: l.lineTotal.toFixed(2).replace('.', ','),
   };
 }
+
+/** Подсказка для явной фасовки вроде «мешок 50 кг». Составные размеры требуют ручной сверки. */
+export function packingWarning(line: DraftLine, unit?: BaseUnit): string | null {
+  if (line.notGoods || (unit !== 'кг' && unit !== 'л')) return null;
+  if (!/^(?:меш(?:ок|ка|ки)?|уп(?:ак(?:овка)?)?|кор(?:об(?:ка)?)?|бут(?:ылка)?|шт)\.?(?:\s|$)/iu.test(line.docUnit.trim())) return null;
+  const count = parseQuantity(line.docQuantity);
+  const quantity = parseQuantity(line.baseQuantity);
+  if (!count || !quantity) return null;
+  const description = line.rawName + ' ' + line.docUnit;
+  if (/\d(?:\s*[×xх*–—/-]\s*\d|\s+\d{3}(?!\d))/iu.test(description)) return null;
+  const sizes = [...description.matchAll(/(\d+(?:[,.]\d+)?)\s*(кг|г|мл|л)(?![\p{L}\d])/giu)];
+  if (sizes.length !== 1) return null;
+  const [, size, rawUnit] = sizes[0];
+  const metric = rawUnit.toLowerCase();
+  if ((metric === 'кг' || metric === 'г') !== (unit === 'кг')) return null;
+  const factor = Number(size.replace(',', '.')) / (metric === 'г' || metric === 'мл' ? 1000 : 1);
+  const expected = count * factor;
+  if (!factor || Math.abs(expected - quantity) < 0.00051) return null;
+  return `По фасовке ожидается ${expected.toLocaleString('ru-RU')} ${unit} (${count} × ${factor.toLocaleString('ru-RU')} ${unit}), указано ${line.baseQuantity} ${unit}`;
+}
