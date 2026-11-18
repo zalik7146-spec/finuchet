@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import type { DraftLine, Product } from '../types';
-import { aliasUpdates, draftLinesToInput, lineUnitPrice, lineWarning, linesForSave, newProductsToCreate, validateLine } from './draftLines';
+import { aliasUpdates, draftLinesToInput, lineUnitPrice, lineWarning, packingWarning, linesForSave, newProductsToCreate, validateLine } from './draftLines';
 
 const flour: Product = { id: 'p1', name: 'Мука пшеничная в/с', unit: 'кг', aliases: [], createdAt: 0 };
 const dl = (over: Partial<DraftLine>): DraftLine => ({
@@ -93,4 +93,17 @@ test('алиасы: название из документа добавляет�
 test('алиасы: совпадающее с названием товара не добавляется', () => {
   const input = [{ position: 0, rawName: 'мука пшеничная в/с', productId: 'p1', docQuantity: 1, docUnit: '', baseQuantity: 50, lineTotal: 1 }];
   expect(aliasUpdates([input], [flour]).size).toBe(0);
+});
+
+test('10 мешков по 50 кг — 500 кг, предупреждение снимается исправлением количества', () => {
+  expect(packingWarning(dl({ baseQuantity: '10' }), 'кг')).toContain('ожидается 500 кг');
+  expect(packingWarning(dl({}), 'кг')).toBeNull();
+});
+
+test('предупреждение о фасовке переводит мл в л и пропускает неоднозначные размеры', () => {
+  const bottle = dl({ rawName: 'Вода 500 мл', docUnit: 'бут.', docQuantity: '12', baseQuantity: '12' });
+  expect(packingWarning(bottle, 'л')).toContain('ожидается 6 л');
+  for (const patch of [{ rawName: 'Ящик 12 × 500 мл' }, { docUnit: 'л' }, { rawName: 'Набор 1 л + 500 мл' }, { notGoods: true }]) {
+    expect(packingWarning({ ...bottle, ...patch }, 'л')).toBeNull();
+  }
 });

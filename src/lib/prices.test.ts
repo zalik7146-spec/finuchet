@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import type { ExpenseLine, Product } from '../types';
-import { priceInsight, pricePoints, productSummaries, type PricePoint } from './prices';
+import { priceImpacts, priceInsight, pricePoints, productSummaries, type PricePoint } from './prices';
 import { exp } from './test-helpers';
 
 const line = (over: Partial<ExpenseLine>): ExpenseLine => ({
@@ -28,7 +28,7 @@ const pt = (over: Partial<PricePoint>): PricePoint => ({
 
 test('pricePoints: цена за базовую единицу с поставщиком и документом расхода', () => {
   const points = pricePoints([line({})], [exp({ id: 'e1', vendor: 'Мельница №1', date: '2026-11-03', documentNumber: '512' })]);
-  expect(points).toEqual([pt({ expenseId: 'e1' })]);
+  expect(points).toEqual([{ ...pt({ expenseId: 'e1' }), quantity: 500, totalCents: 1375000 }]);
 });
 
 test('pricePoints: строки без товара и без количества не дают точек', () => {
@@ -105,4 +105,48 @@ test('productSummaries: последняя цена — не позже конц
 test('productSummaries: товар без закупок', () => {
   const [s] = productSummaries([product('salt')], [], [], [], '', '');
   expect(s).toMatchObject({ last: null, changePct: null, boughtQuantity: 0, boughtTotal: 0 });
+});
+
+test('влияние цен по документам: взвешенная цена, прошлый месяц, рост и снижение на текущем объёме', () => {
+  const expenses = [exp({ id: 'old', date: '2026-10-31' }), exp({ id: 'nov' }), exp({ id: 'next', date: '2026-11-04' })];
+  const points = pricePoints([
+    line({ expenseId: 'nov', baseQuantity: 20, lineTotal: 1800 }),
+    line({ expenseId: 'old', baseQuantity: 10, lineTotal: 900 }),
+    line({ expenseId: 'nov', baseQuantity: 60, lineTotal: 7800 }),
+    line({ expenseId: 'next', baseQuantity: 100, lineTotal: 8000 }),
+  ], expenses.reverse());
+  const impacts = priceImpacts(points, [product('flour')], new Set(['nov', 'next']));
+  expect(impacts.map((p) => [p.previous.expenseId, p.current.expenseId, p.current.quantity, p.amount])).toEqual([
+    ['nov', 'next', 100, -4000], ['old', 'nov', 80, 2400],
+  ]);
+  expect(impacts[1].percent).toBeCloseTo(33.3333);
+});
+
+test('нулевая цена, счета одного дня и неполная партия', () => {
+  const expenses = [exp({ id: 'a' }), exp({ id: 'b' }), exp({ id: 'bad', date: '2026-11-02' }), exp({ id: 'next', date: '2026-11-03' })];
+  const points = pricePoints([
+    ...expenses.map((e) => line({ expenseId: e.id, lineTotal: e.id === 'b' ? 0 : 250 })),
+    line({ expenseId: 'bad', baseQuantity: null }),
+  ], expenses);
+  expect(points.map((p) => p.expenseId)).toEqual(['a', 'b', 'next']);
+  const impacts = priceImpacts(points, [product('flour')], new Set(expenses.map((e) => e.id)));
+  expect(impacts).toHaveLength(1);
+  expect(impacts[0]).toMatchObject({ previous: { expenseId: 'b' }, current: { expenseId: 'next' }, amount: 250, percent: null });
+});
+
+test('одинаковые цены дают нулевой эффект, один документ не даёт сравнения', () => {
+  const points = pricePoints([line({ expenseId: 'a' }), line({ expenseId: 'b' })], [exp({ id: 'a' }), exp({ id: 'b', date: '2026-11-02' })]);
+  expect(priceImpacts(points, [product('flour')], new Set(['a']))).toEqual([]);
+  expect(priceImpacts(points, [product('flour')], new Set(['b']))[0].amount).toBe(0);
+});
+
+test('эффект ровно в половину копейки округляется симметрично', () => {
+  const expenses = [exp({ id: 'old' }), exp({ id: 'new', date: '2026-11-02' })];
+  for (const [currentTotal, expected] of [[1.01, 0.01], [1, -0.01]]) {
+    const points = pricePoints([
+      line({ expenseId: 'old', baseQuantity: 2, lineTotal: 2.01 }),
+      line({ expenseId: 'new', baseQuantity: 1, lineTotal: currentTotal }),
+    ], expenses);
+    expect(priceImpacts(points, [product('flour')], new Set(['new']))[0].amount).toBe(expected);
+  }
 });

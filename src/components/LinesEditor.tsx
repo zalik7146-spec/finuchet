@@ -1,7 +1,7 @@
 import { Fragment, useId, type ReactNode } from 'react';
 import { BASE_UNITS, type BaseUnit, type DraftLine, type Product } from '../types';
 import { emptyLine } from '../lib/extract';
-import { lineUnitPrice, lineWarning, validateLine } from '../lib/draftLines';
+import { lineUnitPrice, lineWarning, packingWarning, validateLine } from '../lib/draftLines';
 import { formatRub, parseAmount } from '../lib/format';
 
 const key = (s: string) => s.trim().toLowerCase();
@@ -19,6 +19,7 @@ export function LinesEditor({
   lines,
   products,
   amount,
+  amountFieldId,
   showErrors,
   onChange,
   renderHint,
@@ -28,6 +29,7 @@ export function LinesEditor({
   products: Product[];
   /** Итог документа — для проверки, что позиции сходятся. */
   amount: number;
+  amountFieldId: string;
   showErrors: boolean;
   onChange: (lines: DraftLine[]) => void;
   /** Подсказка под строкой (сравнение цен). */
@@ -52,7 +54,16 @@ export function LinesEditor({
   const sum = lines.reduce((s, l) => s + (parseAmount(l.lineTotal) || 0), 0);
   const diff = Math.abs(sum - amount);
   const newCount = lines.filter((l) => !l.notGoods && !l.productId && l.newProduct?.name.trim()).length;
-  const needAttention = lines.filter((l) => lineWarning(l)).length;
+  const issues = lines.flatMap((line, i) => {
+    const invalid = validateLine(line);
+    const missing = lineWarning(line);
+    const packing = packingWarning(line, byId.get(line.productId ?? '')?.unit ?? line.newProduct?.unit);
+    const messages = [];
+    if (invalid) messages.push({ field: line.rawName.trim() ? 'lineTotal' : 'rawName', text: invalid });
+    if (missing) messages.push({ field: line.productId || line.newProduct?.name.trim() ? 'baseQuantity' : 'product', text: missing });
+    if (packing) messages.push({ field: 'baseQuantity', text: packing });
+    return messages.map((issue) => ({ ...issue, target: `${line.key}-${issue.field}`, number: i + 1, name: line.rawName }));
+  });
   const rises = countPriceRises?.(lines) ?? 0;
 
   return (
@@ -78,26 +89,36 @@ export function LinesEditor({
                 </span>
               </>
             )}
-            {needAttention > 0 && (
-              <>
-                {' · '}
-                <span className="text-warn">{needAttention} без товара или количества</span>
-              </>
-            )}
             {' · '}
             {amount > 0 && diff > 1 ? (
-              <span className="font-semibold text-warn">
+              <button className="font-semibold text-warn underline" onClick={() => document.getElementById(amountFieldId)?.focus()}>
                 не сходится с итогом на <span className="num">{formatRub(diff)}</span>
-              </span>
-            ) : (
+              </button>
+            ) : amount > 0 ? (
               <span className="text-ok">сходится с итогом</span>
-            )}
+            ) : 'укажите итог документа'}
           </span>
         ) : (
           <span className="text-slate-400">нет — расход сохранится без позиций</span>
         )}
       </div>
 
+      {issues.length > 0 && (
+        <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[13px]">
+          <h3 className="font-semibold text-warn">Проверьте позиции</h3>
+          <ul className="mt-1 space-y-1">
+            {issues.map((issue) => <li key={issue.target}>
+              <button className="text-left text-slate-700 hover:underline" onClick={() => {
+                const field = document.getElementById(issue.target);
+                field?.focus();
+                field?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+              }}>
+                <strong>Строка {issue.number}</strong>{issue.name && ` · ${issue.name}`} — {issue.text}
+              </button>
+            </li>)}
+          </ul>
+        </div>
+      )}
       {lines.length > 0 && (
         <div className="overflow-x-auto rounded-md border border-line">
           <table className="w-full min-w-[860px] table-fixed text-sm">
@@ -136,6 +157,7 @@ export function LinesEditor({
                         value={l.rawName}
                         maxLength={300}
                         title={l.rawName}
+                        id={`${l.key}-rawName`}
                         aria-label="Позиция в документе"
                         data-state={error ? 'bad' : undefined}
                         onChange={(e) => patch(l.key, { rawName: e.target.value })}
@@ -149,6 +171,7 @@ export function LinesEditor({
                           className="field !h-8"
                           list={listId}
                           placeholder="Найти или ввести новый"
+                          id={`${l.key}-product`}
                           aria-label="Товар из справочника"
                           data-state={warning && !product && !l.newProduct?.name.trim() ? 'warn' : undefined}
                           value={product?.name ?? l.newProduct?.name ?? ''}
@@ -164,6 +187,7 @@ export function LinesEditor({
                           <input
                             className="field num !h-8 text-right"
                             inputMode="decimal"
+                            id={`${l.key}-baseQuantity`}
                             aria-label="Количество в единицах товара"
                             data-state={warning && (product || l.newProduct) ? 'warn' : undefined}
                             value={l.baseQuantity}
@@ -177,6 +201,7 @@ export function LinesEditor({
                       <input
                         className="field num !h-8 text-right"
                         inputMode="decimal"
+                        id={`${l.key}-lineTotal`}
                         aria-label="Сумма позиции с НДС"
                         value={l.lineTotal}
                         onChange={(e) => patch(l.key, { lineTotal: e.target.value })}
