@@ -114,7 +114,38 @@ export interface AppUser {
   email: string;
 }
 
+export interface PlannedPurchase {
+  id: string;
+  title: string;
+  ordered: boolean;
+}
+
+export interface TripStop {
+  id: string;
+  place: string;
+  address: string;
+  details: string;
+}
+
+export interface TripInput {
+  title: string;
+  date: string | null;
+  stops: TripStop[];
+}
+
+export interface Trip extends TripInput {
+  id: string;
+  revision: string;
+}
+
 export interface DataStore {
+  subscribePlannedPurchases(cb: (items: PlannedPurchase[]) => void, onError: (e: unknown) => void): () => void;
+  subscribeTrips(cb: (items: Trip[]) => void, onError: (e: unknown) => void): () => void;
+  addPlannedPurchase(title: string): Promise<void>;
+  updatePlannedPurchase(id: string, patch: Partial<Pick<PlannedPurchase, 'title' | 'ordered'>>): Promise<void>;
+  deletePlannedPurchase(id: string): Promise<void>;
+  saveTrip(input: TripInput, existing?: Pick<Trip, 'id' | 'revision'>): Promise<void>;
+  deleteTrip(trip: Pick<Trip, 'id' | 'revision'>): Promise<void>;
   /** Создаёт базовые направления при первом входе. */
   init(): Promise<void>;
   subscribeCategories(cb: (items: Category[]) => void, onError: (e: unknown) => void): () => void;
