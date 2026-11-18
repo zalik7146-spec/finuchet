@@ -114,10 +114,24 @@ export interface AppUser {
   email: string;
 }
 
-export interface PlannedPurchase {
-  id: string;
+export interface PlannedPurchaseInput {
   title: string;
+  group: string;
+  tags: string[];
+  dueDate: string | null;
+}
+
+export interface PlannedPurchase extends PlannedPurchaseInput {
+  id: string;
   ordered: boolean;
+}
+
+export interface PurchaseComment {
+  id: string;
+  purchaseId: string;
+  body: string;
+  author: string;
+  createdAt: number;
 }
 
 export interface TripStop {
@@ -141,9 +155,11 @@ export interface Trip extends TripInput {
 export interface DataStore {
   subscribePlannedPurchases(cb: (items: PlannedPurchase[]) => void, onError: (e: unknown) => void): () => void;
   subscribeTrips(cb: (items: Trip[]) => void, onError: (e: unknown) => void): () => void;
-  addPlannedPurchase(title: string): Promise<void>;
-  updatePlannedPurchase(id: string, patch: Partial<Pick<PlannedPurchase, 'title' | 'ordered'>>): Promise<void>;
+  addPlannedPurchase(input: PlannedPurchaseInput): Promise<void>;
+  updatePlannedPurchase(id: string, patch: Partial<Omit<PlannedPurchase, 'id'>>): Promise<void>;
   deletePlannedPurchase(id: string): Promise<void>;
+  subscribePurchaseComments(purchaseId: string, cb: (items: PurchaseComment[]) => void, onError: (error: unknown) => void): () => void;
+  addPurchaseComment(purchaseId: string, body: string): Promise<PurchaseComment>;
   saveTrip(input: TripInput, existing?: Pick<Trip, 'id' | 'revision'>): Promise<void>;
   deleteTrip(trip: Pick<Trip, 'id' | 'revision'>): Promise<void>;
   /** Создаёт базовые направления при первом входе. */

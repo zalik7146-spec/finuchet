@@ -1,4 +1,4 @@
-import type { Category, DataStore, Expense, ExpenseLine, ExpenseLineInput, PlannedPurchase, Product, Trip } from '../types';
+import type { Category, DataStore, Expense, ExpenseLine, ExpenseLineInput, PlannedPurchase, Product, PurchaseComment, Trip } from '../types';
 import { DEFAULT_CATEGORIES } from './defaults';
 import { pairKey } from './duplicates';
 import { TRIP_CONFLICT } from './planner';
@@ -12,6 +12,7 @@ interface State {
   products: Product[];
   lines: ExpenseLine[];
   plannedPurchases: PlannedPurchase[];
+  purchaseComments: PurchaseComment[];
   trips: Trip[];
   seeded: boolean;
 }
@@ -30,7 +31,13 @@ function normalize(raw: Partial<State>): State {
     dismissals: raw.dismissals ?? [],
     products: raw.products ?? [],
     lines: raw.lines ?? [],
-    plannedPurchases: raw.plannedPurchases ?? [],
+    plannedPurchases: (raw.plannedPurchases ?? []).map((item) => ({
+      ...item,
+      group: item.group ?? '',
+      tags: item.tags ?? [],
+      dueDate: item.dueDate ?? null,
+    })),
+    purchaseComments: raw.purchaseComments ?? [],
     trips: raw.trips ?? [],
     seeded: raw.seeded ?? false,
   };
@@ -76,7 +83,8 @@ export function createLocalStore(): DataStore {
   const lines = channel((s) => s.lines);
   const plannedPurchases = channel((s) => s.plannedPurchases);
   const trips = channel((s) => s.trips);
-  const all = [categories, expenses, dismissals, products, lines, plannedPurchases, trips];
+  const purchaseComments = channel((s) => s.purchaseComments);
+  const all = [categories, expenses, dismissals, products, lines, plannedPurchases, trips, purchaseComments];
 
   const toLines = (expenseId: string, input: ExpenseLineInput[]): ExpenseLine[] =>
     input.map((l) => ({ ...l, id: uid(), expenseId }));
@@ -114,14 +122,25 @@ export function createLocalStore(): DataStore {
     subscribeLines: (cb) => lines.add(cb, state),
     subscribePlannedPurchases: (cb) => plannedPurchases.add(cb, state),
     subscribeTrips: (cb) => trips.add(cb, state),
-    async addPlannedPurchase(title) {
-      commit({ ...state, plannedPurchases: [{ id: uid(), title, ordered: false }, ...state.plannedPurchases] });
+    async addPlannedPurchase(input) {
+      commit({ ...state, plannedPurchases: [{ ...input, id: uid(), ordered: false }, ...state.plannedPurchases] });
     },
     async updatePlannedPurchase(id, patch) {
       commit({ ...state, plannedPurchases: state.plannedPurchases.map((p) => p.id === id ? { ...p, ...patch } : p) });
     },
     async deletePlannedPurchase(id) {
-      commit({ ...state, plannedPurchases: state.plannedPurchases.filter((p) => p.id !== id) });
+      commit({
+        ...state,
+        plannedPurchases: state.plannedPurchases.filter((p) => p.id !== id),
+        purchaseComments: state.purchaseComments.filter((comment) => comment.purchaseId !== id),
+      });
+    },
+    subscribePurchaseComments: (id, cb) => purchaseComments.add((items) => cb(items.filter((item) => item.purchaseId === id)), state),
+    async addPurchaseComment(purchaseId, body) {
+      if (!state.plannedPurchases.some((item) => item.id === purchaseId)) throw new Error('Покупка удалена.');
+      const comment = { id: uid(), purchaseId, body, author: 'Вы', createdAt: Date.now() };
+      commit({ ...state, purchaseComments: [...state.purchaseComments, comment] });
+      return comment;
     },
     async saveTrip(input, existing) {
       const trip = { ...input, id: existing?.id ?? uid(), revision: uid() };
