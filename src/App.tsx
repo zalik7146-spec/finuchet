@@ -8,7 +8,7 @@ import { amountToInput, isValidIsoDate, parseAmount } from './lib/format';
 import { Capture } from './components/Capture';
 import { Categories } from './components/Categories';
 import { Dashboard } from './components/Dashboard';
-import { IconCategories, IconLogout, Logo, IconMembers, IconOverview, IconPurchases, IconRegistry } from './components/icons';
+import { IconCalendar, IconCategories, IconLogout, IconMembers, IconOverview, IconPurchases, IconRegistry, Logo } from './components/icons';
 import { Duplicates } from './components/Duplicates';
 import { findDuplicatePairs } from './lib/duplicates';
 import { aliasUpdates, lineToDraft, linesForSave, lineUnitPrice, newProductsToCreate } from './lib/draftLines';
@@ -21,15 +21,17 @@ import { FilterBar } from './components/FilterBar';
 import { Login } from './components/Login';
 import { Members } from './components/Members';
 import { Purchases } from './components/Purchases';
+import { Planner } from './components/Planner';
 import { Registry } from './components/Registry';
 import { ReviewDialog, ReviewSkeleton } from './components/ReviewDialog';
 import { Confirm, Toasts, type Toast } from './components/ui';
 
-type View = 'dashboard' | 'registry' | 'purchases' | 'categories' | 'members';
+type View = 'dashboard' | 'registry' | 'purchases' | 'planner' | 'categories' | 'members';
 const VIEWS: { id: View; label: string; Icon: (p: SVGProps<SVGSVGElement>) => ReactElement }[] = [
   { id: 'dashboard', label: 'Обзор', Icon: IconOverview },
   { id: 'registry', label: 'Реестр заявок', Icon: IconRegistry },
   { id: 'purchases', label: 'Закупки', Icon: IconPurchases },
+  { id: 'planner', label: 'Планирование', Icon: IconCalendar },
   { id: 'categories', label: 'Направления', Icon: IconCategories },
   ...(cloudEnabled ? [{ id: 'members' as const, label: 'Участники', Icon: IconMembers }] : []),
 ];
@@ -430,14 +432,16 @@ export default function App() {
             <span className="font-bold">{title}</span>
             {(view === 'dashboard' || view === 'registry') && <span className="num ml-2 hidden text-xs text-slate-500 md:inline">{periodLabel(filter)}</span>}
           </div>
-          <button
-            className="btn btn-primary"
-            onClick={exportExcel}
-            disabled={exporting || filteredExpenses.length === 0}
-            title={filteredExpenses.length === 0 ? 'Нет данных в текущей выборке' : 'Отчёт по текущему фильтру'}
-          >
-            {exporting ? 'Формируем…' : 'Скачать Excel'}
-          </button>
+          {view !== 'planner' && (
+            <button
+              className="btn btn-primary"
+              onClick={exportExcel}
+              disabled={exporting || filteredExpenses.length === 0}
+              title={filteredExpenses.length === 0 ? 'Нет данных в текущей выборке' : 'Отчёт по текущему фильтру'}
+            >
+              {exporting ? 'Формируем…' : 'Скачать Excel'}
+            </button>
+          )}
         </header>
 
         <main className="mx-auto flex w-full max-w-[1320px] flex-1 flex-col gap-4 p-4 sm:p-6">
@@ -476,6 +480,8 @@ export default function App() {
                 <Products key={productsSort} summaries={summaries} periodLabel={periodLabel(filter)} initialSort={productsSort} onOpen={setOpenProductId} />
               )}
             </>
+          ) : view === 'planner' ? (
+            store && <Planner key={user.uid} store={store} run={run} notify={notify} />
           ) : view === 'members' ? (
             <Members currentEmail={user.email} onNotify={notify} />
           ) : view === 'categories' ? (

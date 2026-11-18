@@ -1,6 +1,7 @@
-import type { Category, DataStore, Expense, ExpenseLine, ExpenseLineInput, Product } from '../types';
+import type { Category, DataStore, Expense, ExpenseLine, ExpenseLineInput, PlannedPurchase, Product, Trip } from '../types';
 import { DEFAULT_CATEGORIES } from './defaults';
 import { pairKey } from './duplicates';
+import { TRIP_CONFLICT } from './planner';
 
 const KEY = 'finuchet-demo-v1';
 
@@ -10,6 +11,8 @@ interface State {
   dismissals: string[];
   products: Product[];
   lines: ExpenseLine[];
+  plannedPurchases: PlannedPurchase[];
+  trips: Trip[];
   seeded: boolean;
 }
 
@@ -27,6 +30,8 @@ function normalize(raw: Partial<State>): State {
     dismissals: raw.dismissals ?? [],
     products: raw.products ?? [],
     lines: raw.lines ?? [],
+    plannedPurchases: raw.plannedPurchases ?? [],
+    trips: raw.trips ?? [],
     seeded: raw.seeded ?? false,
   };
 }
@@ -69,19 +74,21 @@ export function createLocalStore(): DataStore {
   const dismissals = channel((s) => new Set(s.dismissals));
   const products = channel((s) => s.products);
   const lines = channel((s) => s.lines);
-  const all = [categories, expenses, dismissals, products, lines];
+  const plannedPurchases = channel((s) => s.plannedPurchases);
+  const trips = channel((s) => s.trips);
+  const all = [categories, expenses, dismissals, products, lines, plannedPurchases, trips];
 
   const toLines = (expenseId: string, input: ExpenseLineInput[]): ExpenseLine[] =>
     input.map((l) => ({ ...l, id: uid(), expenseId }));
   const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
   const commit = (next: State) => {
-    state = next;
     try {
-      localStorage.setItem(KEY, JSON.stringify(state));
+      localStorage.setItem(KEY, JSON.stringify(next));
     } catch {
       throw new Error('Не удалось сохранить данные в браузере: хранилище переполнено или недоступно.');
     }
+    state = next;
     all.forEach((c) => c.emit(state));
   };
 
@@ -105,6 +112,29 @@ export function createLocalStore(): DataStore {
     subscribeDismissals: (cb) => dismissals.add(cb, state),
     subscribeProducts: (cb) => products.add(cb, state),
     subscribeLines: (cb) => lines.add(cb, state),
+    subscribePlannedPurchases: (cb) => plannedPurchases.add(cb, state),
+    subscribeTrips: (cb) => trips.add(cb, state),
+    async addPlannedPurchase(title) {
+      commit({ ...state, plannedPurchases: [{ id: uid(), title, ordered: false }, ...state.plannedPurchases] });
+    },
+    async updatePlannedPurchase(id, patch) {
+      commit({ ...state, plannedPurchases: state.plannedPurchases.map((p) => p.id === id ? { ...p, ...patch } : p) });
+    },
+    async deletePlannedPurchase(id) {
+      commit({ ...state, plannedPurchases: state.plannedPurchases.filter((p) => p.id !== id) });
+    },
+    async saveTrip(input, existing) {
+      const trip = { ...input, id: existing?.id ?? uid(), revision: uid() };
+      if (existing && !state.trips.some((t) => t.id === existing.id && t.revision === existing.revision)) {
+        throw new Error(TRIP_CONFLICT);
+      }
+      const nextTrips = existing ? state.trips.map((t) => t.id === trip.id ? trip : t) : [trip, ...state.trips];
+      commit({ ...state, trips: nextTrips });
+    },
+    async deleteTrip(trip) {
+      if (!state.trips.some((t) => t.id === trip.id && t.revision === trip.revision)) throw new Error(TRIP_CONFLICT);
+      commit({ ...state, trips: state.trips.filter((t) => t.id !== trip.id) });
+    },
     async addExpenses(items) {
       const now = Date.now();
       const created = items.map(({ lines: l, ...it }, i) => ({

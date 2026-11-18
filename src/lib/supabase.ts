@@ -1,8 +1,9 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import type { AppUser, BaseUnit, Category, DataStore, Expense, ExpenseInput, ExpenseLine, ExpenseLineInput, Product } from '../types';
+import type { AppUser, BaseUnit, Category, DataStore, Expense, ExpenseInput, ExpenseLine, ExpenseLineInput, PlannedPurchase, Product, Trip } from '../types';
 import { DEFAULT_CATEGORIES } from './defaults';
 import { pairKey } from './duplicates';
 import { withClientIds } from './cloudRows';
+import { TRIP_CONFLICT } from './planner';
 
 /** Убирает пробелы, переносы строк и кавычки, которые легко захватить при вставке значения в панель хостинга. */
 const clean = (v: unknown) =>
@@ -279,12 +280,16 @@ export function createCloudStore(uid: string): DataStore {
   /** Загружает таблицу целиком (постранично) и раздаёт результат подписчикам; изменения с других устройств — через realtime. */
   function tableFeed<R, T>(table: string, order: string[], map: (rows: R[]) => T): Feed<T> {
     const subs = new Set<{ cb: (v: T) => void; onError: (e: unknown) => void }>();
+    let latestRequest = 0;
     const reload = async () => {
+      if (!subs.size) return;
+      const request = ++latestRequest;
       const rows: R[] = [];
       for (let from = 0; ; from += PAGE) {
         let q = sb.from(table).select('*');
         for (const col of order) q = q.order(col);
         const { data, error } = await q.range(from, from + PAGE - 1);
+        if (request !== latestRequest) return;
         if (error) return subs.forEach((s) => s.onError(error));
         rows.push(...(data as R[]));
         if (data.length < PAGE) break;
@@ -333,6 +338,8 @@ export function createCloudStore(uid: string): DataStore {
   );
   const productsFeed = tableFeed<ProductRow, Product[]>('products', ['name'], (rows) => rows.map(toProduct));
   const linesFeed = tableFeed<LineRow, ExpenseLine[]>('expense_items', ['expense_id', 'position', 'id'], (rows) => rows.map(toLine));
+  const plannedPurchasesFeed = tableFeed<PlannedPurchase, PlannedPurchase[]>('planned_purchases', ['created_at', 'id'], (rows) => rows.reverse());
+  const tripsFeed = tableFeed<Trip, Trip[]>('pickup_trips', ['created_at', 'id'], (rows) => rows.reverse());
   const loadCategories = categoriesFeed.reload;
   const loadExpenses = expensesFeed.reload;
 
@@ -369,6 +376,40 @@ export function createCloudStore(uid: string): DataStore {
     subscribeDismissals: dismissalsFeed.subscribe,
     subscribeProducts: productsFeed.subscribe,
     subscribeLines: linesFeed.subscribe,
+    subscribePlannedPurchases: plannedPurchasesFeed.subscribe,
+    subscribeTrips: tripsFeed.subscribe,
+    async addPlannedPurchase(title) {
+      check(await sb.from('planned_purchases').insert({ title }));
+      await plannedPurchasesFeed.reload();
+    },
+    async updatePlannedPurchase(id, patch) {
+      check(await sb.from('planned_purchases').update(patch).eq('id', id).select('id').single());
+      await plannedPurchasesFeed.reload();
+    },
+    async deletePlannedPurchase(id) {
+      check(await sb.from('planned_purchases').delete().eq('id', id));
+      await plannedPurchasesFeed.reload();
+    },
+    async saveTrip(input, existing) {
+      if (existing) {
+        const { data } = check(await sb.from('pickup_trips')
+          .update({ ...input, revision: crypto.randomUUID() })
+          .eq('id', existing.id).eq('revision', existing.revision).select('id').maybeSingle());
+        if (!data) {
+          await tripsFeed.reload();
+          throw new Error(TRIP_CONFLICT);
+        }
+      } else {
+        check(await sb.from('pickup_trips').insert(input));
+      }
+      await tripsFeed.reload();
+    },
+    async deleteTrip(trip) {
+      const { data } = check(await sb.from('pickup_trips').delete()
+        .eq('id', trip.id).eq('revision', trip.revision).select('id').maybeSingle());
+      await tripsFeed.reload();
+      if (!data) throw new Error(TRIP_CONFLICT);
+    },
     async addExpenses(items) {
       const { expenses: withIds, lines: linked } = withClientIds(items);
       const ids = withIds.map((e) => e.id);
