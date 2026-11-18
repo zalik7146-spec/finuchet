@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import JSZip from 'jszip';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const formatDate = (d: Date) => `${pad(d.getUTCDate())}.${pad(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}`;
@@ -22,6 +23,25 @@ function cellText(cell: ExcelJS.Cell): string {
 }
 
 /**
+ * Убираем из архива рисунки и картинки (логотипы, печати, подписи): для текста они не нужны,
+ * а exceljs падает на рисунках в формате, который пишет 1С («reading 'anchors'»).
+ */
+async function withoutDrawings(buf: Buffer): Promise<Buffer> {
+  const zip = await JSZip.loadAsync(buf);
+  // Только рисунки-картинки (drawingN.xml) и сами изображения. VML-файлы примечаний не трогаем — без них exceljs падает на примечаниях.
+  const junk = Object.keys(zip.files).filter((n) => /^xl\/(drawings\/(_rels\/)?[^/]+\.xml(\.rels)?|media\/.+)$/i.test(n));
+  if (!junk.length) return buf;
+  junk.forEach((n) => zip.remove(n));
+  // И ссылки листов на эти рисунки — иначе exceljs ищет удалённый рисунок
+  for (const name of Object.keys(zip.files).filter((n) => /^xl\/worksheets\/[^/]+\.xml$/i.test(n))) {
+    const xml = await zip.file(name)!.async('string');
+    const clean = xml.replace(/<drawing\b[^>]*\/>/g, '');
+    if (clean !== xml) zip.file(name, clean);
+  }
+  return zip.generateAsync({ type: 'nodebuffer' });
+}
+
+/**
  * Excel-счёт → текст для модели: каждый лист с заголовком, строки через перевод строки, ячейки через табуляцию.
  * Gemini не принимает .xlsx напрямую, поэтому таблицу отдаём как текст.
  */
@@ -30,7 +50,7 @@ export async function xlsxToText(buf: Buffer, limits = { maxRows: 2000, maxChars
   if (buf.subarray(0, 4).toString('hex') === 'd0cf11e0') throw new Error('protected_or_xls');
   if (buf.subarray(0, 2).toString('latin1') !== 'PK') throw new Error('not_xlsx');
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buf as unknown as ArrayBuffer);
+  await wb.xlsx.load((await withoutDrawings(buf)) as unknown as ArrayBuffer);
   const out: string[] = [];
   let rows = 0;
   let chars = 0;

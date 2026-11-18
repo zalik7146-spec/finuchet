@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import JSZip from 'jszip';
 import { expect, test } from 'vitest';
 import { xlsxToText } from './xlsx';
 
@@ -84,4 +85,18 @@ test('веб-страница или XML под видом Excel — понят�
 
 test('временный файл Excel (~$) и прочий мусор — не таблица', async () => {
   await expect(xlsxToText(Buffer.from('\x06Lenovo   ', 'latin1'))).rejects.toThrow('not_xlsx');
+});
+
+test('картинка в нестандартном формате (выгрузка 1С) не мешает прочитать таблицу', async () => {
+  const zip = await JSZip.loadAsync(await book((wb) => wb.addWorksheet('Счёт').addRow(['Мука', 10])));
+  // Рисунок без префикса xdr: — так пишет 1С; exceljs на нём падает с «reading 'anchors'»
+  zip.file('xl/drawings/drawing1.xml', '<?xml version="1.0"?><wsDr xmlns="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"><twoCellAnchor/></wsDr>');
+  zip.file('xl/drawings/_rels/drawing1.xml.rels', '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png"/></Relationships>');
+  zip.file('xl/media/image1.png', Buffer.from('89504e47', 'hex'));
+  // Лист ссылается на рисунок, как в настоящем счёте
+  const sheet = (await zip.file('xl/worksheets/sheet1.xml')!.async('string')).replace('</worksheet>', '<drawing r:id="rIdPic"/></worksheet>');
+  zip.file('xl/worksheets/sheet1.xml', sheet);
+  zip.file('xl/worksheets/_rels/sheet1.xml.rels', '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdPic" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/></Relationships>');
+  const buf = await zip.generateAsync({ type: 'nodebuffer' });
+  expect(await xlsxToText(buf)).toContain('Мука\t10');
 });
