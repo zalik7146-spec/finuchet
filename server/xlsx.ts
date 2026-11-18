@@ -26,6 +26,9 @@ function cellText(cell: ExcelJS.Cell): string {
  * Gemini не принимает .xlsx напрямую, поэтому таблицу отдаём как текст.
  */
 export async function xlsxToText(buf: Buffer, limits = { maxRows: 2000, maxChars: 200_000 }): Promise<string> {
+  // .xlsx — это zip-архив (PK..). Контейнер CFB — файл под паролем, с меткой конфиденциальности или старый .xls.
+  if (buf.subarray(0, 4).toString('hex') === 'd0cf11e0') throw new Error('protected_or_xls');
+  if (buf.subarray(0, 2).toString('latin1') !== 'PK') throw new Error('not_xlsx');
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buf as unknown as ArrayBuffer);
   const out: string[] = [];

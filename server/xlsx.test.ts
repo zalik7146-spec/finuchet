@@ -71,3 +71,17 @@ test('обрезка по maxRows', async () => {
   expect(text).toContain('строка 3');
   expect(text).not.toContain('строка 4');
 });
+
+test('защищённый паролем или старый .xls (контейнер CFB) — понятная причина', async () => {
+  const cfb = Buffer.concat([Buffer.from('d0cf11e0a1b11ae1', 'hex'), Buffer.alloc(600)]);
+  await expect(xlsxToText(cfb)).rejects.toThrow('protected_or_xls');
+});
+
+test('веб-страница или XML под видом Excel — понятная причина', async () => {
+  await expect(xlsxToText(Buffer.from('<html><body><table><tr><td>1</td></tr></table></body></html>'))).rejects.toThrow('not_xlsx');
+  await expect(xlsxToText(Buffer.from('<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"/>'))).rejects.toThrow('not_xlsx');
+});
+
+test('временный файл Excel (~$) и прочий мусор — не таблица', async () => {
+  await expect(xlsxToText(Buffer.from('\x06Lenovo   ', 'latin1'))).rejects.toThrow('not_xlsx');
+});

@@ -10,6 +10,9 @@ export const ACCEPTED_MIME = ['application/pdf', 'image/jpeg', 'image/png', 'ima
 export const isXlsx = (file: File) => file.type === XLSX_MIME || /\.xlsx$/i.test(file.name);
 
 export function validateFile(file: File): string | null {
+  if (file.name.startsWith('~$')) {
+    return 'Это временный файл, который Excel создаёт, пока документ открыт. Выберите сам документ — без «~$» в начале имени.';
+  }
   if (/\.xls$/i.test(file.name)) return 'Старый формат .xls не поддерживается. Сохраните файл как .xlsx.';
   if (!ACCEPTED_MIME.includes(file.type) && !isXlsx(file)) return 'Неподдерживаемый формат. Загрузите PDF, JPG, PNG, WEBP или XLSX.';
   if (file.size > MAX_FILE_BYTES) return 'Файл больше 15 МБ.';

@@ -229,8 +229,21 @@ app.post('/api/expenses/extract', requireMember, upload.single('file'), async (r
       try {
         text = await xlsxToText(file.buffer);
       } catch (err) {
-        if ((err as Error).message === 'empty') throw new HttpError(400, 'empty_excel', 'В таблице нет данных.');
-        throw new HttpError(400, 'bad_excel', 'Не удалось прочитать Excel-файл. Проверьте, что он открывается в Excel.');
+        const reason = (err as Error).message;
+        // В журнал — только тип ошибки, начало сигнатуры и размер, без содержимого файла
+        console.error('[xlsx] не удалось разобрать:', reason, '· сигнатура', file.buffer.subarray(0, 4).toString('hex'), '·', file.size, 'байт');
+        if (reason === 'empty') throw new HttpError(400, 'empty_excel', 'В таблице нет данных.');
+        if (reason === 'protected_or_xls') {
+          throw new HttpError(
+            400,
+            'protected_excel',
+            'Файл защищён паролем или меткой конфиденциальности, либо это старый .xls. Откройте его в Excel и сохраните через «Сохранить как → Книга Excel (.xlsx)» без пароля.',
+          );
+        }
+        if (reason === 'not_xlsx') {
+          throw new HttpError(400, 'not_excel', 'Файл назван .xlsx, но внутри не таблица Excel (например, выгрузка в виде веб-страницы). Откройте его в Excel и сохраните как «Книга Excel (.xlsx)».');
+        }
+        throw new HttpError(400, 'bad_excel', 'Не удалось прочитать Excel-файл. Откройте его в Excel и сохраните заново как «Книга Excel (.xlsx)».');
       }
     }
     if (!categories.length) throw new HttpError(400, 'no_categories', 'Не передан список направлений расходов.');
