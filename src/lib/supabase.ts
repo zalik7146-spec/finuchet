@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import type { AppUser, BaseUnit, Category, DataStore, Expense, ExpenseInput, ExpenseLine, ExpenseLineInput, PlannedPurchase, Product, Trip } from '../types';
+import type { AppUser, BaseUnit, Category, DataStore, Expense, ExpenseInput, ExpenseLine, ExpenseLineInput, PlannedPurchase, Product, PurchaseComment, Trip } from '../types';
 import { DEFAULT_CATEGORIES } from './defaults';
 import { pairKey } from './duplicates';
 import { withClientIds } from './cloudRows';
@@ -263,6 +263,46 @@ const EXPENSE_COLUMNS: Record<Exclude<keyof ExpenseInput, 'lines'>, string> = {
 const toExpenseRow = ({ lines: _lines, ...e }: Partial<ExpenseInput>) =>
   Object.fromEntries(Object.entries(e).map(([k, v]) => [EXPENSE_COLUMNS[k as Exclude<keyof ExpenseInput, 'lines'>], v]));
 
+interface PlannedPurchaseRow {
+  id: string;
+  title: string;
+  ordered: boolean;
+  purchase_group: string;
+  tags: string[];
+  due_date: string | null;
+}
+
+const toPlannedPurchase = (row: PlannedPurchaseRow): PlannedPurchase => ({
+  id: row.id,
+  title: row.title,
+  ordered: row.ordered,
+  group: row.purchase_group ?? '',
+  tags: row.tags ?? [],
+  dueDate: row.due_date ?? null,
+});
+
+const toPlannedPurchaseRow = ({ group, dueDate, ...rest }: Partial<Omit<PlannedPurchase, 'id'>>) => ({
+  ...rest,
+  ...(group !== undefined ? { purchase_group: group } : {}),
+  ...(dueDate !== undefined ? { due_date: dueDate } : {}),
+});
+
+interface PurchaseCommentRow {
+  id: string;
+  purchase_id: string;
+  body: string;
+  author_email: string;
+  created_at: string;
+}
+
+const toPurchaseComment = (row: PurchaseCommentRow): PurchaseComment => ({
+  id: row.id,
+  purchaseId: row.purchase_id,
+  body: row.body,
+  author: row.author_email,
+  createdAt: Date.parse(row.created_at),
+});
+
 const PAGE = 1000;
 
 interface Feed<T> {
@@ -338,7 +378,7 @@ export function createCloudStore(uid: string): DataStore {
   );
   const productsFeed = tableFeed<ProductRow, Product[]>('products', ['name'], (rows) => rows.map(toProduct));
   const linesFeed = tableFeed<LineRow, ExpenseLine[]>('expense_items', ['expense_id', 'position', 'id'], (rows) => rows.map(toLine));
-  const plannedPurchasesFeed = tableFeed<PlannedPurchase, PlannedPurchase[]>('planned_purchases', ['created_at', 'id'], (rows) => rows.reverse());
+  const plannedPurchasesFeed = tableFeed<PlannedPurchaseRow, PlannedPurchase[]>('planned_purchases', ['created_at', 'id'], (rows) => rows.reverse().map(toPlannedPurchase));
   const tripsFeed = tableFeed<Trip, Trip[]>('pickup_trips', ['created_at', 'id'], (rows) => rows.reverse());
   const loadCategories = categoriesFeed.reload;
   const loadExpenses = expensesFeed.reload;
@@ -378,17 +418,48 @@ export function createCloudStore(uid: string): DataStore {
     subscribeLines: linesFeed.subscribe,
     subscribePlannedPurchases: plannedPurchasesFeed.subscribe,
     subscribeTrips: tripsFeed.subscribe,
-    async addPlannedPurchase(title) {
-      check(await sb.from('planned_purchases').insert({ title }));
+    async addPlannedPurchase(input) {
+      check(await sb.from('planned_purchases').insert(toPlannedPurchaseRow(input)));
       await plannedPurchasesFeed.reload();
     },
     async updatePlannedPurchase(id, patch) {
-      check(await sb.from('planned_purchases').update(patch).eq('id', id).select('id').single());
+      check(await sb.from('planned_purchases').update(toPlannedPurchaseRow(patch)).eq('id', id).select('id').single());
       await plannedPurchasesFeed.reload();
     },
     async deletePlannedPurchase(id) {
       check(await sb.from('planned_purchases').delete().eq('id', id));
       await plannedPurchasesFeed.reload();
+    },
+    subscribePurchaseComments(purchaseId, cb, onError) {
+      let active = true;
+      let request = 0;
+      const reload = async () => {
+        const current = ++request;
+        const comments: PurchaseComment[] = [];
+        for (let from = 0; ; from += PAGE) {
+          const { data, error } = await sb.from('planned_purchase_comments').select('*')
+            .eq('purchase_id', purchaseId).order('created_at').order('id').range(from, from + PAGE - 1);
+          if (!active || current !== request) return;
+          if (error) return onError(error);
+          comments.push(...(data as PurchaseCommentRow[]).map(toPurchaseComment));
+          if (data.length < PAGE) break;
+        }
+        cb(comments);
+      };
+      const commentsChannel = sb.channel(`purchase-comments-${uid}-${purchaseId}-${crypto.randomUUID()}`)
+        .on('postgres_changes', {
+          event: 'INSERT', schema: 'public', table: 'planned_purchase_comments', filter: `purchase_id=eq.${purchaseId}`,
+        }, () => void reload())
+        .subscribe((status) => { if (status === 'SUBSCRIBED') void reload(); });
+      void reload();
+      return () => {
+        active = false;
+        void sb.removeChannel(commentsChannel);
+      };
+    },
+    async addPurchaseComment(purchaseId, body) {
+      const { data } = check(await sb.from('planned_purchase_comments').insert({ purchase_id: purchaseId, body }).select('*').single());
+      return toPurchaseComment(data as PurchaseCommentRow);
     },
     async saveTrip(input, existing) {
       if (existing) {
